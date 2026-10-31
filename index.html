@@ -1,0 +1,841 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=Geist+Mono:wght@400;500&display=swap">
+<title>Flick</title>
+<link rel="stylesheet" href="/internal/insets.css">
+<style>
+/* token dan geometri mengikuti shadcn/ui resmi: docs theming (neutral) dan registry new-york-v4 */
+:root{--radius:.625rem;--radius-xs:.125rem;--radius-sm:calc(var(--radius)*.6);--radius-md:calc(var(--radius)*.8);
+  --radius-lg:var(--radius);--radius-xl:calc(var(--radius)*1.4);
+  --shadow-xs:0 1px 2px 0 rgba(0,0,0,.05);
+  --shadow-sm:0 1px 3px 0 rgba(0,0,0,.1),0 1px 2px -1px rgba(0,0,0,.1);
+  --shadow-lg:0 10px 15px -3px rgba(0,0,0,.1),0 4px 6px -4px rgba(0,0,0,.1);
+  --font-sans:"Geist",ui-sans-serif,system-ui,sans-serif,"Apple Color Emoji","Segoe UI Emoji","Segoe UI Symbol","Noto Color Emoji";
+  --font-serif:ui-serif,Georgia,Cambria,"Times New Roman",Times,serif;
+  --font-mono:"Geist Mono",ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;
+  --ease:cubic-bezier(.4,0,.2,1);
+  --k:1.2;--fs-xs:calc(12px*var(--k));--lh-xs:calc(16px*var(--k));--fs-sm:calc(14px*var(--k));--lh-sm:calc(20px*var(--k));
+  --fs-base:calc(16px*var(--k));--lh-base:calc(24px*var(--k));--fs-lg:calc(18px*var(--k));--lh-lg:calc(28px*var(--k));
+  --fs-2xl:calc(24px*var(--k));--lh-2xl:calc(32px*var(--k))}
+:root{--background:#ffffff;--foreground:#0a0a0a;--card:#ffffff;--card-foreground:#0a0a0a;--primary:#171717;--primary-foreground:#fafafa;--secondary:#f5f5f5;--secondary-foreground:#171717;--muted:#f5f5f5;--muted-foreground:#737373;--accent:#f5f5f5;--accent-foreground:#171717;--destructive:#e7000b;--border:#e5e5e5;--input:#e5e5e5;--ring:#a1a1a1;--chart-2:#009689;--ring-50:rgba(161,161,161,0.5);--primary-90:rgba(23,23,23,0.9);--secondary-80:rgba(245,245,245,0.8);--destructive-90:rgba(231,0,11,0.9);--destructive-ring:rgba(231,0,11,0.2);--ok-ring:rgba(0,150,137,0.22);--out-bg:var(--background);--out-bd:var(--border);--out-hv:var(--accent);--bad-bg:var(--destructive);--sw-off:var(--input);--sw-thumb:var(--background);--sw-thumb-on:var(--background);color-scheme:light}
+@supports (color:oklch(0 0 0)){:root{--background:oklch(1 0 0);--foreground:oklch(0.145 0 0);--card:oklch(1 0 0);--card-foreground:oklch(0.145 0 0);--primary:oklch(0.205 0 0);--primary-foreground:oklch(0.985 0 0);--secondary:oklch(0.97 0 0);--secondary-foreground:oklch(0.205 0 0);--muted:oklch(0.97 0 0);--muted-foreground:oklch(0.556 0 0);--accent:oklch(0.97 0 0);--accent-foreground:oklch(0.205 0 0);--destructive:oklch(0.577 0.245 27.325);--border:oklch(0.922 0 0);--input:oklch(0.922 0 0);--ring:oklch(0.708 0 0);--chart-2:oklch(0.6 0.118 184.704);--ring-50:oklch(0.708 0 0 / 50%);--primary-90:oklch(0.205 0 0 / 90%);--secondary-80:oklch(0.97 0 0 / 80%);--destructive-90:oklch(0.577 0.245 27.325 / 90%);--destructive-ring:oklch(0.577 0.245 27.325 / 20%)}}
+@media (prefers-color-scheme:dark){
+:root{--background:#0a0a0a;--foreground:#fafafa;--card:#171717;--card-foreground:#fafafa;--primary:#e5e5e5;--primary-foreground:#171717;--secondary:#262626;--secondary-foreground:#fafafa;--muted:#262626;--muted-foreground:#a1a1a1;--accent:#262626;--accent-foreground:#fafafa;--destructive:#ff6467;--border:rgba(255,255,255,0.1);--input:rgba(255,255,255,0.15);--ring:#737373;--chart-2:#00bc7d;--ring-50:rgba(115,115,115,0.5);--primary-90:rgba(229,229,229,0.9);--secondary-80:rgba(38,38,38,0.8);--destructive-90:rgba(255,100,103,0.9);--destructive-ring:rgba(255,100,103,0.4);--ok-ring:rgba(0,188,125,0.28);--input-30:rgba(255,255,255,0.045);--input-50:rgba(255,255,255,0.075);--input-80:rgba(255,255,255,0.12);--bad-bg:rgba(255,100,103,0.6);--out-bg:var(--input-30);--out-bd:var(--input);--out-hv:var(--input-50);--sw-off:var(--input-80);--sw-thumb:var(--foreground);--sw-thumb-on:var(--primary-foreground);color-scheme:dark}
+@supports (color:oklch(0 0 0)){:root{--background:oklch(0.145 0 0);--foreground:oklch(0.985 0 0);--card:oklch(0.205 0 0);--card-foreground:oklch(0.985 0 0);--primary:oklch(0.922 0 0);--primary-foreground:oklch(0.205 0 0);--secondary:oklch(0.269 0 0);--secondary-foreground:oklch(0.985 0 0);--muted:oklch(0.269 0 0);--muted-foreground:oklch(0.708 0 0);--accent:oklch(0.269 0 0);--accent-foreground:oklch(0.985 0 0);--destructive:oklch(0.704 0.191 22.216);--border:oklch(1 0 0 / 10%);--input:oklch(1 0 0 / 15%);--ring:oklch(0.556 0 0);--chart-2:oklch(0.696 0.17 162.48);--ring-50:oklch(0.556 0 0 / 50%);--primary-90:oklch(0.922 0 0 / 90%);--secondary-80:oklch(0.269 0 0 / 80%);--destructive-90:oklch(0.704 0.191 22.216 / 90%);--destructive-ring:oklch(0.704 0.191 22.216 / 40%);--input-30:oklch(1 0 0 / 4.5%);--input-50:oklch(1 0 0 / 7.5%);--input-80:oklch(1 0 0 / 12%);--bad-bg:oklch(0.704 0.191 22.216 / 60%)}}}
+
+*,::before,::after{box-sizing:border-box;border:0 solid var(--border);outline-color:var(--ring-50);-webkit-tap-highlight-color:transparent}
+/* skala teks = tipografi shadcn/ui (xs 12/16, sm 14/20, base 16/24, lg 18/28, 2xl 24/32) dikali --k (1.2) agar nyaman di layar HP.
+   satu angka --k mengatur semuanya: keterangan=xs, isi/label/tombol=sm, judul kartu dan nilai=base, judul dialog=lg, nama=2xl.
+   tinggi baris tidak pernah 1 agar huruf berekor tidak terpotong saat teks membungkus */
+body{margin:0 auto;max-width:480px;padding:16px 16px 40px;background:var(--background);color:var(--foreground);
+  font:var(--fs-sm)/var(--lh-sm) var(--font-sans);-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;text-size-adjust:100%;
+  padding:max(16px,var(--safe-area-inset-top,0px)) 16px max(40px,var(--window-inset-bottom,0px))}
+p,h1,h2,h3{margin:0}
+h1{font:500 var(--fs-2xl)/var(--lh-2xl) var(--font-serif);letter-spacing:-.025em}
+h2{font-size:var(--fs-base);line-height:var(--lh-base);font-weight:600}
+.desc{font-size:var(--fs-sm);line-height:var(--lh-sm);color:var(--muted-foreground)}
+.xs{font-size:var(--fs-xs);line-height:var(--lh-xs)}
+.lbl{font-size:var(--fs-sm);line-height:var(--lh-sm);font-weight:500}
+button{font:inherit;color:inherit;touch-action:manipulation}
+button:not(:disabled){cursor:pointer}
+.err{color:var(--destructive)}
+.hide{display:none}
+
+/* card: gap-6 py-6 px-6 rounded-xl shadow-sm */
+.card{display:flex;flex-direction:column;gap:20px;padding:20px;margin-bottom:16px;background:var(--card);color:var(--card-foreground);
+  border:1px solid var(--border);border-radius:var(--radius-xl);box-shadow:var(--shadow-sm)}
+.ch{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
+.ch>div:first-child{display:grid;gap:4px;min-width:0}
+.col{display:grid;gap:20px}
+/* separator shadcn: garis 1px bg-border selebar kartu, memisahkan bagian dalam satu kartu */
+.sep{flex:none;height:1px;margin:0 -20px;border:0;background:var(--border)}
+.sp{display:flex;align-items:center;justify-content:space-between;gap:12px}
+
+/* header: merek (logo, nama, tagline), panel status dengan titik berhalo, lalu tombol utama. warna titik dan halo
+   mengikuti keadaan Flick, hijau selama aktif, titik berdenyut pelan saat Flick diterapkan */
+.hd{gap:20px}
+.brand{display:flex;align-items:center;gap:14px}
+.logo{display:grid;flex:none;place-items:center;width:44px;height:44px;border-radius:var(--radius-lg);background:var(--primary);
+  color:var(--primary-foreground);box-shadow:var(--shadow-xs)}
+.logo svg{display:block;width:24px;height:24px}
+.bt{display:grid;gap:2px;min-width:0}
+.stat{display:flex;align-items:flex-start;gap:14px;padding:16px;border:1px solid var(--border);border-radius:var(--radius-lg);
+  background:var(--muted);transition:border-color .2s}
+.stat[data-s=ok]{border-color:var(--ok-ring)}
+.stat[data-s=err]{border-color:var(--destructive-ring)}
+.stat>div{display:grid;gap:4px;min-width:0}
+.st{font-size:var(--fs-base);line-height:var(--lh-base);font-weight:600}
+
+/* istilah teknis: tautan bergaris bawah yang membuka dialog */
+.term{display:inline;padding:0;background:none;color:var(--foreground);font:inherit;text-decoration:underline;
+  text-decoration-thickness:1px;text-underline-offset:4px;text-decoration-color:var(--muted-foreground)}
+
+/* titik status: 10px dengan halo 4px */
+.dot{--halo:var(--border);flex:none;width:12px;height:12px;margin-top:8px;border-radius:9999px;background:var(--muted-foreground);
+  box-shadow:0 0 0 4px var(--halo);transition:background-color .2s,box-shadow .2s}
+.dot.ok{--halo:var(--ok-ring);background:var(--chart-2)}
+.dot.on{animation:pulse 2s ease-in-out infinite}
+.dot.err{--halo:var(--destructive-ring);background:var(--destructive)}
+@keyframes pulse{50%{box-shadow:0 0 0 7px transparent}}
+
+/* button: h-9 px-4 py-2 rounded-md text-sm font-medium shadow-xs, ring 3px ring/50 saat fokus */
+.btn{display:inline-flex;flex:none;align-items:center;justify-content:center;gap:8px;height:calc(36px*var(--k));padding:8px 18px;
+  border:1px solid transparent;border-radius:var(--radius-md);background:var(--primary);color:var(--primary-foreground);
+  font-size:var(--fs-sm);line-height:var(--lh-sm);font-weight:500;white-space:nowrap;box-shadow:var(--shadow-xs);outline:none;
+  transition:all .15s var(--ease)}
+.btn:focus-visible{border-color:var(--ring);box-shadow:var(--shadow-xs),0 0 0 3px var(--ring-50)}
+.btn:active:not(:disabled){transform:translateY(1px)}
+.btn:disabled{pointer-events:none;opacity:.5}
+.btn.full{width:100%}
+.btn.lg{height:calc(40px*var(--k));padding:8px 24px}
+.btn.sm{height:calc(32px*var(--k));gap:6px;padding:0 12px}
+.btn.sec{background:var(--secondary);color:var(--secondary-foreground)}
+.btn.out{background:var(--out-bg);border-color:var(--out-bd);color:var(--foreground)}
+.btn.bad{background:var(--bad-bg);color:#fff}
+.btn.bad:focus-visible{box-shadow:var(--shadow-xs),0 0 0 3px var(--destructive-ring)}
+.spin{display:none;flex:none;width:20px;height:20px;animation:spin 1s linear infinite}
+.busy .spin{display:block}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* slider: track h-1.5 bg-muted, thumb size-4 putih, ring 4px ring/50 saat hover, fokus dan geser */
+.slider{position:relative;height:20px;--r:0}
+.track{position:absolute;left:0;right:0;top:50%;height:8px;margin-top:-4px;border-radius:9999px;background:var(--muted);
+  overflow:hidden;pointer-events:none}
+.range{position:absolute;left:0;top:0;bottom:0;width:calc(10px + (100% - 20px) * var(--r));background:var(--primary)}
+.thumb{position:absolute;top:0;left:calc(10px + (100% - 20px) * var(--r));width:20px;height:20px;margin-left:-10px;
+  border:1px solid var(--primary);border-radius:9999px;background:#fff;box-shadow:var(--shadow-sm);outline:none;touch-action:none;
+  transition:color .15s var(--ease),box-shadow .15s var(--ease)}
+.thumb::before{content:"";position:absolute;inset:-14px -10px}
+.thumb:focus-visible,.drag .thumb{box-shadow:var(--shadow-sm),0 0 0 4px var(--ring-50)}
+.val{padding:0 10px;border-radius:var(--radius-md);background:var(--muted);font-size:var(--fs-base);line-height:var(--lh-base);font-weight:600;font-variant-numeric:tabular-nums}
+.val small{font-weight:400;color:var(--muted-foreground);margin-left:1px}
+
+/* switch: proporsi resmi diperbesar ~1.6x untuk layar sentuh: 52x30, thumb 28 */
+.sw{position:relative;display:inline-flex;flex:none;align-items:center;width:52px;height:30px;padding:0;
+  border:1px solid transparent;border-radius:9999px;background:var(--sw-off);box-shadow:var(--shadow-xs);outline:none;
+  transition:all .15s var(--ease)}
+.sw::before{content:"";position:absolute;inset:-10px -6px}
+.sw::after{content:"";display:block;width:28px;height:28px;border-radius:9999px;background:var(--sw-thumb);
+  transition:transform .15s var(--ease)}
+.sw[aria-checked=true]{background:var(--primary)}
+.sw[aria-checked=true]::after{background:var(--sw-thumb-on);transform:translateX(22px)}
+.sw:focus-visible{border-color:var(--ring);box-shadow:var(--shadow-xs),0 0 0 3px var(--ring-50)}
+.swrow{padding:16px;border:1px solid var(--border);border-radius:var(--radius-md)}
+
+/* kartu pilihan bergambar: radio dengan ilustrasi ponsel atau grafik kurva.
+   penanda pilihan (.sel) satu elemen per grup yang meluncur ke kartu terpilih */
+.opts{position:relative;display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));gap:8px}
+.sel{position:absolute;top:0;bottom:0;left:0;width:calc((100% - (var(--n) - 1) * 8px) / var(--n));border:1px solid var(--primary);
+  border-radius:var(--radius-lg);background:var(--accent);box-shadow:0 0 0 1px var(--primary);pointer-events:none;
+  transform:translateX(calc(var(--i,0) * (100% + 8px)))}
+.ready .sel{transition:transform .32s cubic-bezier(.32,.72,0,1)}
+.opt{position:relative;z-index:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-start;gap:6px;min-width:0;
+  padding:10px 6px 8px;border:1px solid var(--border);border-radius:var(--radius-lg);background:transparent;color:var(--muted-foreground);
+  outline:none;transition:border-color .2s var(--ease),box-shadow .15s var(--ease)}
+.opt>span:first-child{display:block;width:100%;max-width:120px}
+.opt svg{display:block;width:100%;height:auto;overflow:visible;transition:opacity .2s}
+.opt .t{font-size:var(--fs-sm);line-height:var(--lh-sm);font-weight:500;color:var(--foreground)}
+.opt .s{font-size:var(--fs-xs);line-height:var(--lh-xs);margin-top:-4px}
+.opt[aria-checked=true]{border-color:transparent}
+.opt:focus-visible{border-color:var(--ring);box-shadow:0 0 0 3px var(--ring-50)}
+.opt[aria-checked=true]:focus-visible{border-color:transparent;box-shadow:0 0 0 4px var(--ring-50)}
+.opt:not([aria-checked=true]) svg{opacity:.8}
+.ph-b{fill:none;stroke:var(--muted-foreground);stroke-width:1.5;transition:stroke .2s}
+.ph-s{fill:var(--muted);transition:fill .2s}
+.ph-h{fill:var(--muted-foreground);fill-opacity:.34;transition:fill .2s,fill-opacity .2s}
+.ph-n{fill:var(--muted-foreground);transition:fill .2s}
+.opt[aria-checked=true] .ph-b{stroke:var(--foreground)}
+.opt[aria-checked=true] .ph-s{fill:var(--card)}
+.opt[aria-checked=true] .ph-n{fill:var(--foreground)}
+.opt[aria-checked=true] .ph-h{fill:var(--primary);fill-opacity:.3}
+.cv-ax{fill:none;stroke:var(--muted-foreground);stroke-width:1.2;stroke-linecap:round;stroke-linejoin:round;opacity:.55}
+.cv-ref{fill:none;stroke:var(--muted-foreground);stroke-width:1.6;stroke-linecap:round;stroke-dasharray:4 4}
+.cv-ln{fill:none;stroke:var(--foreground);stroke-width:2.6;stroke-linecap:round}
+
+/* bagian tambahan: tinggi dianimasikan lewat JS (setCl) dengan nilai piksel, karena transisi grid-template-rows
+   tidak didukung WebView lama. tinggi akhir dikembalikan ke auto agar isi yang berubah tidak terpotong */
+.cl{height:0;margin:0 -4px;padding:0 4px;overflow:hidden;opacity:0;visibility:hidden}
+.ready .cl{transition:height .32s cubic-bezier(.32,.72,0,1),opacity .24s ease,visibility 0s .32s}
+.cl.open{opacity:1;visibility:visible}
+.ready .cl.open{transition-delay:0s}
+.in{display:grid;gap:16px;padding:20px 0 4px}
+
+/* input cari: h-9 rounded-md border-input px-3 shadow-xs (hp android tidak auto-zoom) */
+.srch{display:block;width:100%;height:calc(36px*var(--k));padding:0 12px;border:1px solid var(--input);border-radius:var(--radius-md);
+  background:transparent;color:var(--foreground);box-shadow:var(--shadow-xs);outline:none;font:var(--fs-sm)/var(--lh-sm) var(--font-sans);
+  transition:color .15s var(--ease),box-shadow .15s var(--ease)}
+@media (prefers-color-scheme:dark){.srch{background:var(--input-30)}}
+.srch::placeholder{color:var(--muted-foreground)}
+.srch:focus-visible{border-color:var(--ring);box-shadow:var(--shadow-xs),0 0 0 3px var(--ring-50)}
+
+/* daftar aplikasi: ikon, nama, package. dipakai oleh daftar terpilih dan oleh pemilih aplikasi */
+.apps{display:grid;gap:8px;margin:0;padding:0;list-style:none}
+.app{display:flex;align-items:center;gap:12px;min-width:0;padding:10px 12px;border:1px solid var(--border);border-radius:var(--radius-md)}
+.ico{flex:none;display:grid;place-items:center;width:36px;height:36px;overflow:hidden;border-radius:var(--radius-md);background:var(--muted);
+  color:var(--muted-foreground);font-weight:600}
+.ico img{display:block;width:100%;height:100%;object-fit:cover}
+.ai{display:grid;gap:2px;flex:1;min-width:0;text-align:left}
+.ai .n,.ai .p{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ai .n{font-size:var(--fs-sm);line-height:var(--lh-sm);font-weight:500}
+.ai .p{font:var(--fs-xs)/var(--lh-xs) var(--font-mono);color:var(--muted-foreground)}
+.rm{position:relative;display:grid;flex:none;place-items:center;width:28px;height:28px;padding:0;border-radius:var(--radius-md);
+  background:none;color:var(--muted-foreground);outline:none}
+.rm::before{content:"";position:absolute;inset:-8px}
+.rm:disabled{opacity:.35}
+.rm:focus-visible{box-shadow:0 0 0 3px var(--ring-50)}
+.pl{min-height:0;margin:0 -4px;padding:0 4px;overflow-y:auto;overscroll-behavior:contain;max-height:200px}
+.pick{width:100%;color:inherit;background:transparent;outline:none;transition:background-color .15s var(--ease),box-shadow .15s var(--ease)}
+.pick[aria-checked=true]{background:var(--accent)}
+.pick:disabled{opacity:.5}
+.pick:focus-visible{border-color:var(--ring);box-shadow:0 0 0 3px var(--ring-50)}
+/* checkbox shadcn: size-4 rounded-[4px] border border-input shadow-xs, tercentang bg-primary text-primary-foreground, dark:bg-input/30 */
+.chk{display:grid;flex:none;place-items:center;width:16px;height:16px;border:1px solid var(--input);border-radius:4px;color:transparent;
+  box-shadow:var(--shadow-xs);transition:background-color .15s var(--ease),border-color .15s var(--ease),box-shadow .15s var(--ease)}
+@media (prefers-color-scheme:dark){.chk{background:var(--input-30)}}
+.pick[aria-checked=true] .chk{border-color:var(--primary);background:var(--primary);color:var(--primary-foreground)}
+.pick:focus-visible .chk{border-color:var(--ring);box-shadow:0 0 0 3px var(--ring-50)}
+.pkl{max-height:126px;margin:0 -4px;padding:0 4px;overflow-y:auto;overscroll-behavior:contain}
+.pkl .app{padding:6px 8px;gap:10px}
+.pkl .ico{width:28px;height:28px;font-size:var(--fs-xs)}
+.pl .app{padding:6px 10px;gap:12px}
+#pMsg:empty{display:none}
+.pl .ico{width:32px;height:32px}
+.pdlg{outline:none;max-height:100%;overflow-y:auto}
+.pdlg .body{display:grid;gap:12px}
+
+/* dialog: overlay bg-black/50, konten rounded-lg border p-6 gap-4 shadow-lg, zoom-in-95 dan fade 200ms */
+.ov{position:fixed;inset:0;z-index:50;display:flex;align-items:center;justify-content:center;padding:16px;
+  background:rgba(0,0,0,.5);opacity:0;visibility:hidden;transition:opacity .2s,visibility 0s .2s}
+.ov.open{opacity:1;visibility:visible;transition-delay:0s}
+.dlg{position:relative;display:grid;gap:16px;width:100%;max-width:512px;padding:24px;background:var(--background);
+  border:1px solid var(--border);border-radius:var(--radius-lg);box-shadow:var(--shadow-lg);opacity:0;transform:scale(.95);
+  transition:opacity .2s,transform .2s}
+.ov.open .dlg{opacity:1;transform:none}
+.dh{display:flex;flex-direction:column;gap:8px;text-align:center}
+@media (min-width:640px){.dh{text-align:left}}
+.dlg h3{font-size:var(--fs-lg);line-height:1;font-weight:600;padding:0 24px}
+@media (min-width:640px){.dlg h3{padding:0 24px 0 0}}
+.dlg .dh p{font-size:var(--fs-sm);line-height:var(--lh-sm)}
+#dD{display:grid;gap:8px}
+.dlg .x{position:absolute;top:16px;right:16px;display:grid;place-items:center;width:16px;height:16px;padding:0;
+  border-radius:var(--radius-xs);background:none;color:inherit;opacity:.7;outline:none;transition:opacity .15s}
+.dlg .x::before{content:"";position:absolute;inset:-12px}
+.dlg .x:focus-visible{box-shadow:0 0 0 2px var(--background),0 0 0 4px var(--ring)}
+.foot{display:flex;flex-direction:column-reverse;gap:8px}
+@media (min-width:640px){.foot{flex-direction:row;justify-content:flex-end}}
+
+pre{margin:0;font:var(--fs-xs)/var(--lh-xs) var(--font-mono);color:var(--muted-foreground);white-space:pre-wrap;word-break:break-word}
+
+/* hover hanya pada perangkat yang benar-benar punya kursor, seperti varian hover di tailwind v4 */
+@media (hover:hover){
+  .pick:not(:disabled):not([aria-checked=true]):hover{background:var(--accent)}
+  .rm:not(:disabled):hover{color:var(--foreground)}
+  .btn:hover:not(:disabled){background:var(--primary-90)}
+  .btn.sec:hover:not(:disabled){background:var(--secondary-80)}
+  .btn.out:hover:not(:disabled){background:var(--out-hv);color:var(--accent-foreground)}
+  .btn.bad:hover:not(:disabled){background:var(--destructive-90)}
+  .opt:not([aria-checked=true]):hover{background:var(--accent)}
+  .thumb:hover{box-shadow:var(--shadow-sm),0 0 0 4px var(--ring-50)}
+  .dlg .x:hover{opacity:1}
+  .term:hover{text-decoration-color:var(--foreground)}
+}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}.spin{animation-duration:2s}.dot{animation:none!important}}
+</style>
+</head>
+<body>
+
+<header class="card hd">
+  <div class="brand">
+    <span class="logo" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="18" r="1.5"/><path d="M10 14 18 6M10 6h8v8"/></svg></span>
+    <div class="bt"><h1>Flick</h1><p class="desc">Lightweight touch sensitivity tuner for games.</p></div>
+  </div>
+  <div class="stat" id="stat" data-s="off">
+    <i class="dot" id="dot"></i>
+    <div><p class="st" id="badge" aria-live="polite">…</p><p class="desc" id="detail">Memeriksa status…</p></div>
+  </div>
+  <button class="btn lg full" id="toggle"><svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="status" aria-label="Memuat"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span id="toggleT">Aktifkan</span></button>
+</header>
+
+<div class="card">
+  <div class="ch"><div><h2>Sensitivitas</h2>
+    <p class="desc"><button class="term" data-t="kelipatan">Kelipatan</button> gerakan jari, 1.0× sampai 5.0×.</p></div></div>
+  <div class="col">
+    <div class="col" style="gap:14px">
+      <div class="sp"><span class="lbl"><button class="term" data-t="x">Sensitivitas X (Horizontal)</button></span><span class="val"><span data-show="sens_h">1.0</span><small>×</small></span></div>
+      <div class="slider" data-k="sens_h" data-min="1" data-max="5" data-step="0.1"><div class="track"><div class="range"></div></div><div class="thumb" role="slider" tabindex="0" aria-label="Sensitivitas X (Horizontal)"></div></div>
+    </div>
+    <div class="col" style="gap:14px">
+      <div class="sp"><span class="lbl"><button class="term" data-t="y">Sensitivitas Y (Vertical)</button></span><span class="val"><span data-show="sens_v">1.0</span><small>×</small></span></div>
+      <div class="slider" data-k="sens_v" data-min="1" data-max="5" data-step="0.1"><div class="track"><div class="range"></div></div><div class="thumb" role="slider" tabindex="0" aria-label="Sensitivitas Y (Vertical)"></div></div>
+    </div>
+    <div class="sp swrow"><label class="lbl" id="linkL">Sinkronkan Sensitivitas X/Y</label>
+      <button class="sw" id="link" role="switch" aria-labelledby="linkL"></button></div>
+  </div>
+<hr class="sep">
+  <div class="ch"><div><h2>Kurva sensitivitas</h2>
+    <p class="desc"><button class="term" data-t="kurva">Kurva</button> kelipatan terhadap kecepatan gerak jari.</p></div></div>
+  <div class="col" style="gap:12px">
+    <div class="opts" role="radiogroup" aria-label="Kurva sensitivitas" data-k="curve" style="--n:3">
+      <button class="opt" role="radio" data-v="0"><span data-cv="lin"></span><span class="t">Linear</span></button>
+      <button class="opt" role="radio" data-v="1"><span data-cv="accel"></span><span class="t">Accel</span></button>
+      <button class="opt" role="radio" data-v="2"><span data-cv="decel"></span><span class="t">Decel</span></button>
+    </div>
+    <p class="desc" id="cvDesc"></p>
+  </div>
+<hr class="sep">
+  <div class="ch"><div><h2>Zona sentuh</h2>
+    <p class="desc">Flick hanya diterapkan pada <button class="term" data-t="zona">zona</button> terpilih. Input di luar zona tidak dimodifikasi.</p></div></div>
+  <div>
+    <div class="opts" role="radiogroup" aria-label="Zona sentuh" data-k="zone" style="--n:3">
+      <button class="opt" role="radio" data-v="0"><span data-ph="all"></span><span class="t">Global</span></button>
+      <button class="opt" role="radio" data-v="1"><span data-ph="left"></span><span class="t">Kiri</span></button>
+      <button class="opt" role="radio" data-v="2"><span data-ph="right"></span><span class="t">Kanan</span></button>
+    </div>
+    <div class="cl" id="orientBox"><div class="cw"><div class="in" style="gap:12px">
+      <p class="lbl"><button class="term" data-t="rotasi">Rotasi layar</button></p>
+      <div class="opts" role="radiogroup" aria-label="Rotasi layar" data-k="orient" style="--n:2">
+        <button class="opt" role="radio" data-v="1"><span data-ph="none" data-cam="left"></span><span class="t">Landscape 90°</span><span class="s">Kamera di kiri</span></button>
+        <button class="opt" role="radio" data-v="3"><span data-ph="none" data-cam="right"></span><span class="t">Landscape 270°</span><span class="s">Kamera di kanan</span></button>
+      </div>
+    </div></div></div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="ch"><div><h2>Penstabil gerakan</h2>
+    <p class="desc">Redam jitter jari dengan <button class="term" data-t="oneeuro">1€ Filter</button>.</p></div>
+    <button class="sw" role="switch" data-k="smooth" aria-label="Penstabil gerakan"></button></div>
+  <div class="cl" id="smoothBox" style="margin-top:-20px"><div class="cw"><div class="in">
+    <div class="col" style="gap:14px">
+      <div class="sp"><span class="lbl"><button class="term" data-t="kekuatan">Kekuatan</button></span><span class="val"><span data-show="strength">40</span><small>%</small></span></div>
+      <div class="slider" data-k="strength" data-min="1" data-max="100" data-step="1"><div class="track"><div class="range"></div></div><div class="thumb" role="slider" tabindex="0" aria-label="Kekuatan peredaman"></div></div>
+      <p class="desc xs">Nilai tinggi: gerak lambat lebih halus, respons lebih berat.</p>
+    </div>
+    <div class="col" style="gap:14px">
+      <div class="sp"><span class="lbl"><button class="term" data-t="resp">Responsivitas</button></span><span class="val"><span data-show="resp">85</span><small>%</small></span></div>
+      <div class="slider" data-k="resp" data-min="1" data-max="100" data-step="1"><div class="track"><div class="range"></div></div><div class="thumb" role="slider" tabindex="0" aria-label="Responsivitas"></div></div>
+      <p class="desc xs">Nilai tinggi: tarikan cepat lebih responsif, lag lebih kecil.</p>
+    </div>
+  </div></div></div>
+<hr class="sep">
+  <div class="ch"><div><h2>HW Touch Enhancer</h2>
+    <p class="desc">Tingkatkan respon sentuhan menggunakan <button class="term" data-t="hwc">Hardware Composer</button>.</p></div>
+    <button class="sw" role="switch" data-k="hw" aria-label="HW Touch Enhancer"></button></div>
+</div>
+
+<div class="card">
+  <div class="ch"><div><h2>Filter package</h2>
+    <p class="desc">Flick hanya diterapkan saat salah satu <button class="term" data-t="package">package</button> di daftar berada di <button class="term" data-t="fg">foreground</button>.</p></div>
+    <button class="sw" role="switch" data-k="filter" aria-label="Filter package"></button></div>
+  <div style="margin-top:-20px">
+    <div class="cl" id="pkBox"><div class="cw"><div class="in" style="gap:12px">
+      <div class="sp"><span class="lbl">Aplikasi dalam filter</span><span class="desc xs" id="pkCount"></span></div>
+      <ul class="apps pkl" id="pkList" aria-label="Daftar package"></ul>
+      <p class="desc xs hide" id="pkWarn" role="status">Tidak ada package di daftar yang terpasang, Flick tidak akan pernah diterapkan.</p>
+      <div class="sp"><button class="btn sec sm" id="pkAdd">Tambah aplikasi</button><button class="btn out sm" id="pkReset">Atur ulang</button></div>
+    </div></div></div>
+    <div class="cl" id="pkOff"><div class="cw"><div class="in"><p class="desc">Filter nonaktif: Flick diterapkan di semua aplikasi selama aktif.</p></div></div></div>
+  </div>
+</div>
+
+<button class="btn bad lg full" id="kill" style="margin-bottom:16px"><svg class="spin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" role="status" aria-label="Memuat"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg><span>Hentikan darurat</span></button>
+<div class="card" style="padding:16px"><pre id="log">Perubahan berlaku mulai sentuhan berikutnya.</pre></div>
+
+<p class="desc xs" style="padding:0 8px;text-align:center">Logika kalkulasi sensitivitas (kelipatan X/Y, kurva, dan parameter penstabil) diambil dari fitur Magic Touch di aplikasi Game Corner milik FahrezONE melalui reverse engineering.</p>
+
+<div class="ov" id="pov" aria-hidden="true">
+  <div class="dlg pdlg" role="dialog" aria-modal="true" aria-labelledby="pT" tabindex="-1">
+    <button class="x" id="pClose" aria-label="Tutup"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    <div class="dh"><h3 id="pT">Tambah aplikasi</h3><p class="desc">Pilih aplikasi atau ketik package.</p></div>
+    <div class="body">
+      <input class="srch" id="pq" type="search" placeholder="Cari nama atau package" aria-label="Cari aplikasi" autocomplete="off" autocapitalize="off" autocorrect="off" spellcheck="false" enterkeyhint="search">
+      <div class="sp"><label class="lbl" id="pSysL">Tampilkan aplikasi sistem</label><button class="sw" id="pSys" role="switch" aria-labelledby="pSysL"></button></div>
+      <ul class="apps pl" id="pl" aria-label="Aplikasi terpasang"></ul>
+      <p class="desc xs" id="pMsg" role="status" aria-live="polite"></p>
+    </div>
+    <div class="foot"><button class="btn lg" id="pOk">Selesai</button></div>
+  </div>
+</div>
+
+<div class="ov" id="ov" aria-hidden="true">
+  <div class="dlg" role="dialog" aria-modal="true" aria-labelledby="dT" aria-describedby="dD">
+    <button class="x" id="dClose" aria-label="Tutup"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+    <div class="dh"><h3 id="dT"></h3><div id="dD"></div></div>
+    <div class="foot"><button class="btn lg" id="dOk">Mengerti</button></div>
+  </div>
+</div>
+
+<script>
+try{if(window.ksu&&typeof ksu.fullScreen==='function')ksu.fullScreen(true)}catch(e){}
+// folder plugin dari host (ksu.moduleInfo().moduleDir), jalur shell mode hanya cadangan bila host tidak memberinya
+const FALLBACK_DIR='/data/user_de/0/com.android.shell/axeron/plugins/flick';
+const DIR=(()=>{
+  try{const d=JSON.parse(ksu.moduleInfo()).moduleDir;if(typeof d==='string'&&d[0]==='/')return d.replace(/\/+$/,'')||'/'}catch(e){}
+  return FALLBACK_DIR;
+})();
+const DEF_PK='com.dts.freefireth,com.dts.freefiremax';
+const MAX_PK=16, CHUNK=25;
+const PK_RE=/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
+// kunci sens_h dan sens_v tetap, di UI keduanya adalah Sensitivitas X dan Y
+const cfg={sens_h:1,sens_v:1,curve:0,zone:0,orient:1,smooth:0,strength:40,resp:85,hw:0,filter:1,pkgs:DEF_PK};
+let link=true, running=false, busy=false, busyText='', state='', prevS=null, candS=null, seq=0, floorSeq=0;
+const $=id=>document.getElementById(id);
+const all=sel=>document.querySelectorAll(sel);
+
+const TERMS={
+  x:['Sensitivitas X (Horizontal)','Kelipatan untuk gerak jari ke kiri dan kanan, saat HP landscape.','Nilai tinggi membuat geseran horizontal terbaca lebih jauh oleh game.'],
+  y:['Sensitivitas Y (Vertical)','Kelipatan untuk gerak jari ke atas dan bawah, saat HP landscape.','Pada game tembak seperti Free Fire, ini paling berpengaruh pada tarikan ke atas untuk membidik kepala.'],
+  kelipatan:['Kelipatan','Berapa kali lipat jarak geser jari diperbesar sebelum dibaca game.','Contoh: 2.0× membuat geseran 1 cm terbaca 2 cm. 1.0× berarti tidak ada perubahan.'],
+  kurva:['Kurva sensitivitas','Menentukan apakah kelipatan berubah menurut kecepatan jari. Linear: kelipatan tetap. Accel: gerak pelan memakai kelipatan biasa, gerak cepat diperkuat sampai 1.8× dari kelipatan itu. Decel: gerak pelan memakai kelipatan biasa, gerak cepat dilemahkan sampai separuhnya.','Kecepatan dihitung dari X dan Y sekaligus untuk tiap laporan sentuh, dibandingkan dengan gerak cepat sekitar 4% sisi panjang layar per laporan. Kurva dikunci saat jari menyentuh layar.'],
+  hwc:['Hardware Composer','Flick menyetel properti sistem debug.sf.hw=1 (konfigurasi Hardware Composer, komponen Android yang menyusun tampilan layar).','Properti hanya diubah selama Flick diterapkan, lalu dikembalikan ke nilai awal saat Flick berhenti atau dinonaktifkan. Efek bergantung pada perangkat.'],
+  zona:['Zona sentuh','Layar dibagi dua di titik tengah. Global: seluruh layar. Kiri atau Kanan: hanya sisi itu.','Pilih sisi tempat jari mengarahkan bidikan, sehingga sisi lain (mis. tombol gerak) tetap normal.'],
+  rotasi:['Rotasi layar','Menentukan sisi mana yang dianggap kiri, karena landscape 90° dan 270° saling berlawanan.','Flick tidak membaca rotasi otomatis. Jika zona kiri dan kanan terbalik, pilih opsi lainnya.'],
+  oneeuro:['1€ Filter','Low-pass filter adaptif untuk input pointer, dikembangkan oleh Géry Casiez, Nicolas Roussel, dan Daniel Vogel (CHI 2012). Cutoff naik mengikuti kecepatan jari: jitter saat diam diredam, gerak cepat diteruskan tanpa lag berarti.','Filter bekerja pada posisi asli sebelum diperbesar oleh kelipatan, sehingga jitter tidak ikut membesar.'],
+  kekuatan:['Kekuatan','Mengatur min cutoff 1€ Filter (20 Hz hingga 0.5 Hz). Nilai tinggi meredam jitter gerak lambat lebih keras.','Konsekuensinya gerak pelan terasa lebih berat. Bawaan: 40%.'],
+  resp:['Responsivitas','Mengatur beta 1€ Filter (0.5 hingga 60). Nilai tinggi membuat filter terbuka lebih cepat saat jari bergerak cepat.','Tarikan cepat diteruskan dengan lag minimal. Bawaan: 85%.'],
+  package:['Package','ID unik aplikasi Android, mis. com.dts.freefireth (Free Fire) dan com.dts.freefiremax (Free Fire MAX).','Pilih aplikasi dari daftar lewat tombol Tambah aplikasi. Jika tidak muncul (mis. aplikasi di profil lain), ketik package lengkapnya di kolom pencarian.'],
+  fg:['Foreground','Aplikasi yang sedang tampil dan digunakan di layar. Aplikasi yang terbuka tetapi tidak tampil berada di background.','Di luar foreground, Flick tidak diterapkan dan input sentuh sepenuhnya normal.']
+};
+let lastFocus=null;
+function openDlg(k){
+  const t=TERMS[k]; if(!t)return;
+  $('dT').textContent=t[0];
+  $('dD').innerHTML='';
+  t.slice(1).forEach(s=>{const p=document.createElement('p');p.textContent=s;if(p.previousSibling||$('dD').children.length)p.className='desc';$('dD').appendChild(p)});
+  lastFocus=document.activeElement;
+  $('ov').classList.add('open');$('ov').setAttribute('aria-hidden','false');
+  document.body.style.overflow='hidden';
+  setTimeout(()=>$('dOk').focus(),30);
+}
+function closeDlg(){
+  $('ov').classList.remove('open');$('ov').setAttribute('aria-hidden','true');
+  document.body.style.overflow='';
+  if(lastFocus&&lastFocus.focus)lastFocus.focus();
+}
+document.addEventListener('click',e=>{const b=e.target.closest('.term');if(b)openDlg(b.dataset.t)});
+$('dOk').addEventListener('click',closeDlg);
+$('dClose').addEventListener('click',closeDlg);
+$('ov').addEventListener('click',e=>{if(e.target===$('ov'))closeDlg()});
+document.addEventListener('keydown',e=>{
+  const o=document.querySelector('.ov.open');
+  if(!o)return;
+  if(e.key==='Escape'){o.id==='pov'?closePick():closeDlg();return}
+  if(e.key!=='Tab')return;
+  if(o.id==='ov'){e.preventDefault();$('dOk').focus();return}
+  const f=[...o.querySelectorAll('input,button:not(:disabled)')];
+  if(!f.length)return;
+  const a=f[0],z=f[f.length-1];
+  if(e.shiftKey&&document.activeElement===a){e.preventDefault();z.focus()}
+  else if(!e.shiftKey&&document.activeElement===z){e.preventDefault();a.focus()}
+});
+
+function run(cmd){
+  return new Promise(res=>{
+    if(!window.ksu||!ksu.exec){res({errno:-1,stdout:'',stderr:'API ksu.exec tidak ditemukan'});return}
+    const cb='cb_'+Date.now()+'_'+Math.random().toString(36).slice(2);
+    window[cb]=(errno,stdout,stderr)=>{delete window[cb];res({errno,stdout:stdout||'',stderr:stderr||''})};
+    ksu.exec(cmd,JSON.stringify({cwd:DIR}),cb);
+  });
+}
+// semua logika shell ada di ctl.sh. perintah dari WebUI lewat sh -c di dalam tanda kutip ganda, jadi hanya kata polos yang dikirim
+const ctl=(...a)=>run('sh ./ctl.sh '+a.join(' '));
+const log=t=>{$('log').textContent=t||'—'};
+const toast=m=>{try{if(window.ksu&&typeof ksu.toast==='function')ksu.toast(m)}catch(e){}};
+const statusKey=()=>!running?'off':state.startsWith('error:')?'error':state==='active'?'active':'idle';
+// toast hanya untuk perubahan yang pasti. hasil dari tombol langsung diumumkan (now). perubahan dari polling harus terbaca dua kali
+// berturut-turut, jadi kedipan sesaat (berkas state kosong waktu ditulis ulang, error:adj yang hilang di tick berikutnya) tidak jadi toast.
+// perubahan idle <-> active (Flick mulai atau berhenti diterapkan di package filter) tidak pernah jadi toast: daemon mengirim notifikasi
+// sistem lewat notify.sh, jadi tetap muncul saat WebUI tertutup atau timer halamannya ditahan
+const live=x=>x==='idle'||x==='active';
+function announce(now){
+  const s=statusKey();
+  if(prevS===null){prevS=s;return}
+  if(s===prevS){candS=null;return}
+  if(live(s)&&live(prevS)){prevS=s;candS=null;return}
+  if(!now&&s!==candS){candS=s;return}
+  candS=null;
+  toast(s==='error'?'Error: '+state.slice(6):live(s)?'Flick aktif'+(s==='idle'&&cfg.filter?' · menunggu game':''):'Flick nonaktif');
+  prevS=s;
+}
+// bagian tambahan: buka/tutup dengan tinggi piksel yang dianimasikan, lalu kembali ke auto
+const RM=matchMedia('(prefers-reduced-motion:reduce)');
+function setCl(el,open){
+  if(el._o===open)return;
+  const first=el._o===undefined;el._o=open;
+  el.classList.toggle('open',open);
+  clearTimeout(el._t);
+  if(first||RM.matches||!document.body.classList.contains('ready')){el.style.height=open?'auto':'0px';return}
+  el.style.height=el.getBoundingClientRect().height+'px';
+  void el.offsetHeight;
+  el.style.height=(open?el.scrollHeight:0)+'px';
+  el._t=setTimeout(()=>{if(el._o)el.style.height='auto'},380);
+}
+
+// "a, b;c" -> {v:'a,b,c',n:3} atau {err:'...'}, aturan yang sama dengan daemon tetapi lebih ketat
+function parsePk(s){
+  const list=[...new Set(s.split(/[\s,;]+/).filter(Boolean))];
+  if(!list.length)return{err:'Isi minimal satu package.'};
+  const bad=list.find(p=>!PK_RE.test(p)||p.length>127);
+  if(bad)return{err:'Package tidak valid: '+bad};
+  if(list.length>16)return{err:'Maksimal 16 package.'};
+  const v=list.join(',');
+  return v.length>1000?{err:'Daftar terlalu panjang.'}:{v,n:list.length};
+}
+// info aplikasi dari host (ksu.getPackagesInfo, label dan status terpasang), tiap package hanya ditanyakan sekali.
+// panggilan ksu ini sinkron dan memblokir halaman, jadi dipanggil dalam potongan kecil
+const info=new Map(), infoTried=new Set();
+let infoVer=0, pkKey='';
+const hasPkgApi=()=>!!(window.ksu&&typeof ksu.listPackages==='function'&&typeof ksu.getPackagesInfo==='function');
+const okPk=p=>PK_RE.test(p)&&p.length<128;
+function pkgInfo(list){
+  list.forEach(p=>infoTried.add(p));
+  if(!hasPkgApi()||!list.length)return;
+  try{
+    JSON.parse(ksu.getPackagesInfo(JSON.stringify(list))).forEach(o=>{
+      if(o&&o.packageName)info.set(o.packageName,o.error?{ok:false,l:'',sys:false}:{ok:true,l:o.appLabel||'',sys:!!o.isSystem});
+    });
+  }catch(e){}
+  infoVer++;
+}
+const syncInfo=()=>pkgInfo(cfg.pkgs.split(',').filter(p=>!infoTried.has(p)));
+const labelOf=p=>{const i=info.get(p);return i&&i.ok&&i.l?i.l:''};
+const SVG_X='<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M18 6 6 18M6 6l12 12"/></svg>';
+const SVG_OK='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+const SVG_PLUS='<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>';
+const el=(tag,cls,txt)=>{const e=document.createElement(tag);if(cls)e.className=cls;if(txt)e.textContent=txt;return e};
+
+// ikon dari host (ax://package.icon, cadangan ksu://icon), huruf pertama bila keduanya gagal
+function iconEl(p){
+  const d=el('span','ico');d.setAttribute('aria-hidden','true');
+  const im=new Image();im.alt='';im.loading='lazy';im.decoding='async';
+  let n=0;
+  im.onerror=()=>{if(!n++){im.src='ksu://icon/'+p}else{im.remove();d.textContent=(labelOf(p)||p).charAt(0).toUpperCase()}};
+  im.src='ax://package.icon/'+p;
+  d.appendChild(im);
+  return d;
+}
+function appText(p,compact){
+  const i=info.get(p),lab=labelOf(p),b=el('span','ai');
+  b.appendChild(el('span','n',lab||p));
+  const sub=(lab&&!compact)?p:(!lab&&i&&!i.ok?'Belum terpasang':'');
+  if(sub)b.appendChild(el('span','p',sub));
+  return b;
+}
+
+// tinggi daftar dibatasi n baris, dengan setengah baris terakhir terlihat sebagai petunjuk bahwa daftar bisa digulir.
+// tinggi baris diukur dari DOM (offsetHeight tidak terpengaruh transform dialog), jadi ikut skala teks
+function capList(ul,n){
+  const r=ul.firstElementChild;
+  if(!r||!r.offsetHeight)return;
+  const gap=parseFloat(getComputedStyle(ul).rowGap)||0;
+  ul.style.maxHeight=Math.round(r.offsetHeight*n+gap*Math.floor(n))+'px';
+}
+// daftar terpilih di kartu. dibangun ulang hanya bila isinya berubah, supaya polling 3 detik tidak membuat ikon berkedip
+function drawPk(){
+  const key=cfg.pkgs+'|'+infoVer;
+  if(key===pkKey)return;
+  pkKey=key;
+  const list=cfg.pkgs.split(','),ul=$('pkList');
+  ul.textContent='';
+  list.forEach(p=>{
+    const li=el('li','app'),b=el('button','rm');
+    b.type='button';b.dataset.p=p;b.disabled=list.length<=1;
+    b.setAttribute('aria-label','Hapus '+(labelOf(p)||p));
+    b.innerHTML=SVG_X;
+    li.append(iconEl(p),appText(p,true),b);
+    ul.appendChild(li);
+  });
+  capList(ul,2.5);
+  $('pkCount').textContent=list.length+' dari '+MAX_PK;
+  $('pkWarn').classList.toggle('hide',!(hasPkgApi()&&list.every(p=>{const i=info.get(p);return i&&i.ok===false})));
+}
+let svT=0;
+const saveSoon=()=>{clearTimeout(svT);svT=setTimeout(()=>{svT=0;saveCfg()},300)};
+// daftar baru dari tombol di UI, divalidasi dengan aturan yang sama seperti sebelumnya
+function commitPk(v){
+  const p=parsePk(v);
+  if(p.err){toast(p.err);return false}
+  cfg.pkgs=p.v;syncInfo();render();saveSoon();
+  return true;
+}
+
+// pemilih aplikasi: daftar aplikasi terpasang dari ksu.listPackages, dicari dengan nama atau package
+const apps={user:[],system:[]}, pLoaded={user:false,system:false};
+let pOpen=false, pQ='', pSys=false, pLoading='', pFocus=null, pChain=Promise.resolve();
+const tick=()=>new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));
+async function loadKind(kind){
+  let names=[];
+  try{names=JSON.parse(ksu.listPackages(kind))}catch(e){}
+  names=names.filter(okPk);
+  const need=names.filter(p=>!infoTried.has(p));
+  for(let i=0;i<need.length;i+=CHUNK){
+    if(!pOpen)return;
+    pLoading='Memuat daftar aplikasi… '+i+'/'+need.length;
+    $('pMsg').textContent=pLoading;
+    await tick();
+    if(!pOpen)return;
+    pkgInfo(need.slice(i,i+CHUNK));
+  }
+  apps[kind]=names;pLoaded[kind]=true;
+}
+function ensureApps(){
+  pChain=pChain.then(async()=>{
+    try{
+      if(!hasPkgApi())return;
+      if(!pLoaded.user)await loadKind('user');
+      if(pOpen&&pSys&&!pLoaded.system)await loadKind('system');
+    }catch(e){}
+    finally{pLoading='';if(pOpen)drawPick()}
+  });
+}
+function pickRow(o){
+  const li=el('li'),b=el('button','app pick'),chk=el('span','chk');
+  b.type='button';b.dataset.p=o.p;b.setAttribute('role','checkbox');
+  chk.innerHTML=SVG_OK;
+  b.append(chk,iconEl(o.p),appText(o.p));
+  li.appendChild(b);
+  return li;
+}
+function addRow(list){
+  const li=el('li'),b=el('button','app pick'),ic=el('span','ico'),t=el('span','ai');
+  b.type='button';b.dataset.add=list.join(',');
+  ic.innerHTML=SVG_PLUS;ic.setAttribute('aria-hidden','true');
+  t.append(el('span','n','Tambah package'),el('span','p',list.join(', ')));
+  b.append(ic,t);li.appendChild(b);
+  return li;
+}
+function syncPick(){
+  const sel=new Set(cfg.pkgs.split(',')),full=sel.size>=MAX_PK;
+  all('#pl .pick[data-p]').forEach(b=>{
+    const on=sel.has(b.dataset.p);
+    b.setAttribute('aria-checked',on?'true':'false');
+    b.disabled=!on&&full;
+  });
+}
+function drawPick(){
+  const ul=$('pl'),q=pQ.trim().toLowerCase(),sel=new Set(cfg.pkgs.split(','));
+  const names=pSys?apps.user.concat(apps.system):apps.user;
+  const rows=names.map(p=>({p,l:labelOf(p)||p})).filter(o=>!q||o.l.toLowerCase().includes(q)||o.p.toLowerCase().includes(q));
+  rows.sort((a,b)=>a.l.localeCompare(b.l)||a.p.localeCompare(b.p));
+  ul.textContent='';
+  const typed=parsePk(pQ.trim());
+  if(!typed.err){
+    const add=typed.v.split(',').filter(p=>!sel.has(p)&&!names.includes(p));
+    if(add.length)ul.appendChild(addRow(add));
+  }
+  rows.forEach(o=>ul.appendChild(pickRow(o)));
+  syncPick();
+  capList(ul,3.5);
+  $('pMsg').textContent=pLoading||(!hasPkgApi()?'Daftar aplikasi tidak tersedia di host ini. Ketik package lengkap di kolom pencarian.'
+    :ul.children.length?'':'Tidak ada aplikasi yang cocok.');
+}
+function openPick(){
+  pOpen=true;pQ='';pSys=false;pLoaded.user=pLoaded.system=false;
+  $('pq').value='';$('pSys').setAttribute('aria-checked','false');
+  pFocus=document.activeElement;
+  $('pov').classList.add('open');$('pov').setAttribute('aria-hidden','false');
+  document.body.style.overflow='hidden';
+  drawPick();
+  setTimeout(()=>$('pov').querySelector('.dlg').focus(),30);
+  ensureApps();
+}
+function closePick(){
+  pOpen=false;
+  $('pov').classList.remove('open');$('pov').setAttribute('aria-hidden','true');
+  document.body.style.overflow='';
+  if(svT){clearTimeout(svT);svT=0;saveCfg()}
+  if(pFocus&&pFocus.focus)pFocus.focus();
+}
+
+// ilustrasi ponsel landscape layar penuh dengan kamera punch hole. bagian layar yang ter-highlight = area yang dipengaruhi,
+// lubang kamera (lingkaran di dalam layar, tepat di tengah sisi pendek) menunjukkan sisi atas ponsel
+let phN=0;
+function phone(region,cam){
+  const id='pc'+(phN++),cx=cam==='left'?6:66;
+  const hi=region==='none'?'':`<clipPath id="${id}"><rect x="1.5" y="1.5" width="69" height="33" rx="5.25"/></clipPath>`+
+    `<rect class="ph-h" clip-path="url(#${id})" x="${region==='right'?36:1.5}" y="1.5" width="${region==='all'?69:34.5}" height="33"/>`;
+  return `<svg viewBox="0 0 72 36" aria-hidden="true"><rect class="ph-s" x="1.5" y="1.5" width="69" height="33" rx="5.25"/>${hi}`+
+    `<circle class="ph-n" cx="${cx}" cy="18" r="2.1"/><rect class="ph-b" x=".75" y=".75" width="70.5" height="34.5" rx="6"/></svg>`;
+}
+// grafik kurva: sumbu mendatar kecepatan jari, sumbu tegak hasil. ikon skematis, bukan ukuran persis rumus di daemon
+const CV_PATH={lin:'M12 70L92 6',accel:'M12 70Q52 70 92 6',decel:'M12 70Q52 6 92 6'};
+function curveSVG(k){
+  return `<svg viewBox="0 0 100 76" aria-hidden="true"><path class="cv-ax" d="M12 2V70H98"/>`+
+    (k==='lin'?'':`<path class="cv-ref" d="${CV_PATH.lin}"/>`)+`<path class="cv-ln" d="${CV_PATH[k]}"/></svg>`;
+}
+const CV_DESC=['Kelipatan sama di semua kecepatan.','Pelan memakai kelipatan biasa, gerak cepat diperkuat hingga 1.8×.','Pelan memakai kelipatan biasa, gerak cepat dilemahkan hingga 0.5×.'];
+function drawArt(){
+  all('[data-ph]').forEach(e=>{
+    const cam=e.dataset.cam||(cfg.orient===3?'right':'left'),key=e.dataset.ph+cam;
+    if(e._k!==key){e._k=key;e.innerHTML=phone(e.dataset.ph,cam)}
+  });
+  all('[data-cv]').forEach(e=>{if(!e._k){e._k=1;e.innerHTML=curveSVG(e.dataset.cv)}});
+}
+function render(){
+  drawArt();
+  $('cvDesc').textContent=CV_DESC[cfg.curve]||CV_DESC[0];
+  all('[data-show]').forEach(e=>{const k=e.dataset.show;e.textContent=k.startsWith('sens')?cfg[k].toFixed(1):cfg[k]});
+  all('.slider').forEach(s=>{
+    const k=s.dataset.k,mn=+s.dataset.min,mx=+s.dataset.max,th=s.querySelector('.thumb');
+    s.style.setProperty('--r',(cfg[k]-mn)/(mx-mn));
+    th.setAttribute('aria-valuemin',mn);th.setAttribute('aria-valuemax',mx);th.setAttribute('aria-valuenow',cfg[k]);
+  });
+  all('.sw[data-k]').forEach(e=>e.setAttribute('aria-checked',cfg[e.dataset.k]?'true':'false'));
+  all('.opts[data-k]').forEach(g=>{
+    const bs=[...g.querySelectorAll('button')];
+    g.style.setProperty('--n',bs.length);
+    bs.forEach((b,i)=>{const on=+b.dataset.v===cfg[g.dataset.k];b.setAttribute('aria-checked',on?'true':'false');if(on)g.style.setProperty('--i',i)});
+  });
+  $('link').setAttribute('aria-checked',link?'true':'false');
+  setCl($('orientBox'),cfg.zone!==0);
+  setCl($('smoothBox'),!!cfg.smooth);
+  setCl($('pkBox'),!!cfg.filter);
+  setCl($('pkOff'),!cfg.filter);
+  drawPk();
+  const err=state.startsWith('error:'), act=running&&state==='active';
+  $('badge').textContent=!running?'Nonaktif':err?'Error':'Aktif';
+  $('dot').className='dot'+(!running?'':err?' err':act?' ok on':' ok');
+  $('stat').dataset.s=!running?'off':err?'err':'ok';
+  $('detail').textContent=!running?'Flick tidak berjalan. Input sentuh tidak dimodifikasi.'
+    :err?'Error: '+state.slice(6)
+    :act?'Flick sedang diterapkan pada input sentuh.'
+    :cfg.filter?'Menunggu package di daftar berada di foreground.':'Flick aktif, menunggu input sentuh.';
+  $('toggleT').textContent=busy?busyText:running?'Nonaktifkan':'Aktifkan';
+  $('toggle').classList.toggle('sec',running&&!busy);
+  $('toggle').classList.toggle('busy',busy);
+  $('toggle').disabled=busy;
+}
+
+// penulisan atomik ada di ctl.sh (berkas sementara lalu rename), daemon memuat ulang saat rename dan tidak pernah membaca berkas setengah jadi.
+// semua nilai kata polos (angka, huruf, titik, koma), jadi aman dikirim sebagai argumen
+async function saveCfg(){
+  const r=await ctl('save',...Object.entries(cfg).map(([k,v])=>k+'='+(k.startsWith('sens')?v.toFixed(1):v)));
+  if(r.errno!==0)log((r.stderr||'Gagal menyimpan config').trim());
+  return r;
+}
+
+// hasil status yang dimulai sebelum sebuah tombol ditekan (my<=floorSeq) sudah basi, dibuang supaya tidak membalik status
+// dan memicu toast ganda. bagian config tetap dibaca, kalau tidak pemuatan awal bisa hilang
+async function refresh(full=true,now=false){
+  const my=++seq;
+  const r=await ctl('status');
+  const stale=my<=floorSeq;
+  let seen=false;
+  r.stdout.split('\n').forEach(l=>{
+    const i=l.indexOf('='); if(i<0)return;
+    const k=l.slice(0,i), v=l.slice(i+1).trim();
+    if(k==='running'){if(!stale){running=v==='1';seen=true}}
+    else if(k==='state'){if(!stale&&(v!==''||!running))state=v}
+    else if(!full)return;
+    else if(k==='pkgs'){const p=parsePk(v);if(p.v)cfg.pkgs=p.v}
+    else if(k in cfg&&v!==''&&!isNaN(parseFloat(v)))cfg[k]=parseFloat(v);
+  });
+  if(full){link=cfg.sens_h===cfg.sens_v;syncInfo()}
+  if(r.errno!==0&&r.stderr)log(r.stderr);
+  if(seen)announce(now);
+  render();
+}
+async function guarded(txt,fn){
+  if(busy)return;
+  busy=true;busyText=txt;floorSeq=++seq;render();
+  try{await fn()}finally{busy=false;await refresh(false,true)}
+}
+const start=()=>guarded('Mengaktifkan…',async()=>{
+  await saveCfg();
+  const r=await ctl('start');
+  const out=(r.stdout+r.stderr).trim();
+  log(out);
+  if(!out.startsWith('OK'))toast(out.split('\n')[0]||'Gagal memulai');
+});
+const stop=()=>guarded('Menonaktifkan…',async()=>{
+  const was=running;
+  await ctl('stop');
+  log('Flick dihentikan. Input sentuh kembali normal.');
+  toast(was?'Flick nonaktif':'Flick sudah nonaktif');
+  prevS='off';candS=null;
+});
+
+// slider: knob digeser secara relatif terhadap posisi awal sentuhan, ketukan pada trek diabaikan
+const KNOB=20;
+all('.slider').forEach(s=>{
+  const k=s.dataset.k,mn=+s.dataset.min,mx=+s.dataset.max,st=+s.dataset.step,th=s.querySelector('.thumb');
+  let drag=false,sx=0,sv=0,tm=0;
+  const snap=v=>Math.min(mx,Math.max(mn,+(Math.round(v/st)*st).toFixed(2)));
+  const put=v=>{
+    v=snap(v); if(v===cfg[k])return;
+    cfg[k]=v;
+    if(link&&k==='sens_h')cfg.sens_v=v;
+    if(link&&k==='sens_v')cfg.sens_h=v;
+    render();
+  };
+  th.addEventListener('pointerdown',e=>{
+    drag=true;sx=e.clientX;sv=cfg[k];s.classList.add('drag');
+    th.setPointerCapture(e.pointerId);e.preventDefault();th.focus({preventScroll:true});
+  });
+  th.addEventListener('pointermove',e=>{
+    if(!drag)return;
+    const w=s.getBoundingClientRect().width-KNOB;
+    if(w>0)put(sv+(e.clientX-sx)/w*(mx-mn));
+  });
+  const end=()=>{if(!drag)return;drag=false;s.classList.remove('drag');saveCfg()};
+  th.addEventListener('pointerup',end);
+  th.addEventListener('pointercancel',end);
+  th.addEventListener('keydown',e=>{
+    const d={ArrowLeft:-st,ArrowDown:-st,ArrowRight:st,ArrowUp:st,PageDown:-st*10,PageUp:st*10}[e.key];
+    if(d===undefined&&e.key!=='Home'&&e.key!=='End')return;
+    e.preventDefault();
+    put(e.key==='Home'?mn:e.key==='End'?mx:cfg[k]+d);
+    clearTimeout(tm);tm=setTimeout(saveCfg,300);
+  });
+});
+// penanda opsi terpilih, satu elemen per grup yang meluncur antar opsi
+all('.opts').forEach(g=>{const p=document.createElement('span');p.className='sel';g.prepend(p)});
+all('.sw[data-k]').forEach(e=>e.addEventListener('click',()=>{const k=e.dataset.k;cfg[k]=cfg[k]?0:1;render();saveCfg()}));
+all('.opts[data-k]').forEach(g=>g.addEventListener('click',ev=>{
+  const b=ev.target.closest('button'); if(!b)return;
+  cfg[g.dataset.k]=+b.dataset.v;render();saveCfg();
+}));
+$('link').addEventListener('click',()=>{link=!link;if(link)cfg.sens_v=cfg.sens_h;render();saveCfg()});
+
+$('pkList').addEventListener('click',e=>{
+  const b=e.target.closest('.rm');
+  if(!b||b.disabled)return;
+  const list=cfg.pkgs.split(',').filter(x=>x!==b.dataset.p);
+  if(list.length)commitPk(list.join(','));
+});
+$('pkAdd').addEventListener('click',openPick);
+$('pkReset').addEventListener('click',()=>commitPk(DEF_PK));
+$('pl').addEventListener('click',e=>{
+  const b=e.target.closest('.pick');
+  if(!b||b.disabled)return;
+  const cur=cfg.pkgs.split(',');
+  if(b.dataset.add){
+    if(commitPk(cur.concat(b.dataset.add.split(',')).join(','))){pQ='';$('pq').value='';drawPick()}
+    return;
+  }
+  const i=cur.indexOf(b.dataset.p);
+  if(i>=0){if(cur.length<=1){toast('Minimal satu package');return}cur.splice(i,1)}
+  else if(cur.length>=MAX_PK){toast('Maksimal '+MAX_PK+' package');return}
+  else cur.push(b.dataset.p);
+  if(commitPk(cur.join(',')))syncPick();
+});
+$('pq').addEventListener('input',e=>{pQ=e.target.value;drawPick()});
+$('pq').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.target.blur()}});
+$('pSys').addEventListener('click',()=>{pSys=!pSys;$('pSys').setAttribute('aria-checked',pSys?'true':'false');drawPick();ensureApps()});
+$('pOk').addEventListener('click',closePick);
+$('pClose').addEventListener('click',closePick);
+$('pov').addEventListener('click',e=>{if(e.target===$('pov'))closePick()});
+
+$('toggle').addEventListener('click',()=>running?stop():start());
+$('kill').addEventListener('click',stop);
+refresh().then(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.add('ready'))));
+setInterval(()=>{if(!busy)refresh(false)},3000);
+</script>
+</body>
+</html>

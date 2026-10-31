@@ -1,0 +1,90 @@
+name: Build plugin
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  selftest:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run on the host
+        run: |
+          set -e
+          g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -fno-exceptions -fno-rtti selftest.cpp -o selftest-host
+          ./selftest-host
+      - name: Build for the phone
+        run: |
+          set -e
+          BIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+          mkdir -p out-test
+          for t in aarch64-linux-android24:arm64 armv7a-linux-androideabi24:arm; do
+            $BIN/${t%%:*}-clang++ -Os -ffp-contract=off -fno-exceptions -fno-rtti -nostdlib++ \
+              selftest.cpp -o out-test/selftest.${t##*:} -lm
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Selftest
+          path: out-test/selftest.*
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile (arm64 + arm)
+        run: |
+          set -e
+          BIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+          mkdir -p out/system/bin out/webroot
+          for t in aarch64-linux-android24:arm64 armv7a-linux-androideabi24:arm; do
+            $BIN/${t%%:*}-clang++ -Os -ffp-contract=off -DNDEBUG -Wall -Wextra -s \
+              -nostdlib++ \
+              -fno-exceptions -fno-rtti -fvisibility=hidden \
+              -fno-unwind-tables -fno-asynchronous-unwind-tables \
+              -ffunction-sections -fdata-sections \
+              -Wl,--gc-sections -Wl,--build-id=none \
+              flick.cpp -o out/system/bin/flick.${t##*:} -lm
+          done
+          file out/system/bin/flick.*
+          ls -l out/system/bin
+      - name: Verify no extra shared libraries
+        run: |
+          set -e
+          READELF=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
+          for f in out/system/bin/flick.*; do
+            $READELF -d $f | grep NEEDED || true
+            $READELF -lW $f | grep LOAD || true
+            if $READELF -d $f | grep NEEDED | grep -vE 'lib(c|m|dl)\.so'; then
+              echo "::error::$f depends on a library that does not exist on the phone"
+              exit 1
+            fi
+          done
+      - name: Check module.prop
+        run: |
+          grep -qE '^id=[a-zA-Z][a-zA-Z0-9._-]+$' module.prop || { echo "::error::module.prop id is invalid"; exit 1; }
+          grep -qE '^versionCode=[0-9]+$' module.prop || { echo "::error::versionCode must be an integer"; exit 1; }
+          grep -qE '^axeronPlugin=[0-9]+$' module.prop || { echo "::error::axeronPlugin must be a number"; exit 1; }
+      - name: Stage module
+        run: |
+          set -e
+          cp module.prop customize.sh uninstall.sh hw.sh ctl.sh notify.sh out/
+          cp index.html out/webroot/
+          sed -i 's/\r$//' out/module.prop out/*.sh
+          for f in out/*.sh; do sh -n "$f"; done
+          chmod 755 out/*.sh out/system/bin/flick.*
+      - name: Package
+        run: |
+          VER=$(grep '^version=' module.prop | cut -d= -f2)
+          cd out && zip -r ../Flick-$VER.zip .
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Flick
+          path: Flick-*.zip
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: Flick-*.zip
