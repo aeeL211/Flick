@@ -1048,19 +1048,21 @@ enum {
   cfgBitPkgs = 1u << 10
 };
 
+// no default member initializers: they would place the two 5 KB connection buffers in .data
+// instead of .bss. ctlConnReset() establishes the same initial state without inflating the binary.
 struct CtlConn {
-  int fd = -1;
-  bool authed = false;
-  bool failed = false;
-  bool subscribed = false;
-  bool stopWhenDrained = false;
-  bool peerClosed = false;
-  int64_t acceptedMs = 0;
-  int64_t closeAtMs = 0;
-  size_t inLen = 0;
-  size_t outLen = 0;
-  char in[ctlLineMax + 1] = {};
-  char out[ctlOutMax] = {};
+  int fd;
+  bool authed;
+  bool failed;
+  bool subscribed;
+  bool stopWhenDrained;
+  bool peerClosed;
+  int64_t acceptedMs;
+  int64_t closeAtMs;
+  size_t inLen;
+  size_t outLen;
+  char in[ctlLineMax + 1];
+  char out[ctlOutMax];
 };
 
 static int gCtlListen = -1;
@@ -1081,6 +1083,11 @@ static int gCtlEvtPaused = -1;
 static void wipeMem(void *p, size_t n) {
   volatile unsigned char *q = (volatile unsigned char *)p;
   while (n--) *q++ = 0;
+}
+
+static void ctlConnReset(CtlConn &c) {
+  wipeMem(&c, sizeof c);
+  c.fd = -1;
 }
 
 // reads the token once, wipes the original environment value, and removes the variable before any
@@ -1127,18 +1134,7 @@ static void ctlFdSetup(int fd) {
 
 static void ctlClose(CtlConn &c) {
   if (c.fd >= 0) close(c.fd);
-  wipeMem(c.in, sizeof c.in);
-  wipeMem(c.out, sizeof c.out);
-  c.fd = -1;
-  c.authed = false;
-  c.failed = false;
-  c.subscribed = false;
-  c.stopWhenDrained = false;
-  c.peerClosed = false;
-  c.acceptedMs = 0;
-  c.closeAtMs = 0;
-  c.inLen = 0;
-  c.outLen = 0;
+  ctlConnReset(c);
 }
 
 static bool ctlQueue(CtlConn &c, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -1351,7 +1347,7 @@ static bool ctlAccept(int64_t now) {
     if (gCtlPending.fd >= 0 && !gCtlPending.failed) { close(fd); continue; }
     if (gCtlPending.fd >= 0) ctlClose(gCtlPending);
     ctlFdSetup(fd);
-    gCtlPending = CtlConn();
+    ctlConnReset(gCtlPending);
     gCtlPending.fd = fd;
     gCtlPending.acceptedMs = now;
     fresh = true;
@@ -1367,7 +1363,7 @@ static bool ctlPromote(CtlConn &src) {
   gCtlClient.closeAtMs = 0;
   gCtlClient.stopWhenDrained = false;
   gCtlClient.subscribed = false;
-  gCtlPending = CtlConn();
+  ctlConnReset(gCtlPending);
   if (!ctlQueue(gCtlClient, "OK flick=%s proto=1\n", FLICK_VERSION)) {
     ctlClose(gCtlClient);
     return false;
@@ -1567,6 +1563,10 @@ static void ctlService(int64_t now, short listenEv, short pendingEv, short clien
 // binds only the loopback address. port 0 is accepted for the host test, which learns the real
 // port from getsockname.
 static int ctlStart(unsigned port) {
+  if (gCtlListen < 0) {
+    ctlConnReset(gCtlPending);
+    ctlConnReset(gCtlClient);
+  }
   if (gCtlTokenLen < ctlTokenMin) { errno = EACCES; return -1; }
   int fd = socket(AF_INET, SOCK_STREAM, 0);
   if (fd < 0) return -1;
@@ -1626,6 +1626,8 @@ static void ctlShutdown() {
 }
 
 int main(int argc, char **argv) {
+  ctlConnReset(gCtlPending);
+  ctlConnReset(gCtlClient);
   const char *cfgPath = "config", *pidPath = "flick.pid", *dev = nullptr;
   long listenPort = -1;
   bool detach = false;
