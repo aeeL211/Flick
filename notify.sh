@@ -20,4 +20,4 @@ case $S in
   idle) T="Flick tidak diterapkan" ;;
   *) exit 0 ;;
 esac
-cmd notification post -t Flick flick "$T"
+/system/bin/cmd notification post -t Flick flick "$T"

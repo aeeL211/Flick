@@ -1,6 +1,6 @@
 A=$ARCH
 case "$A" in arm64|arm) ;; *)
-  case "$(getprop ro.product.cpu.abi)" in
+  case "$(/system/bin/getprop ro.product.cpu.abi)" in
     arm64*) A=arm64 ;;
     armeabi*) A=arm ;;
     *) abort "Only arm64 and arm (32-bit) are supported" ;;
@@ -11,9 +11,15 @@ BIN=$MODPATH/system/bin
 
 # stop an older running instance, its binary cannot be overwritten while it runs. axmanager also
 # stops the processes of an updated plugin, this covers the old Vektor (id sensit) as well: its
-# daemon would still hold the touchscreen. AXERONDIR is the working folder of the current mode, the
-# shell mode folder is only the fallback
-PL=${AXERONDIR:-/data/user_de/0/com.android.shell/axeron}/plugins
+# daemon would still hold the touchscreen. MODPATH is $AXERONDIR/plugins/<id> during customize.sh,
+# so its parent is the active plugins folder in both root and shell mode. do not hardcode either
+# mode's path, they differ and the server can switch between them.
+PL=${MODPATH%/*}
+case "$PL" in
+  /*) ;;
+  *) [ -n "$AXERONDIR" ] && PL=$AXERONDIR/plugins ;;
+esac
+[ -n "$PL" ] || abort "Cannot locate the plugins folder"
 for F in "$PL/flick/flick.pid" "$PL/sensit/sensit.pid"; do
   [ -f "$F" ] && kill "$(cat "$F")" 2>/dev/null
 done

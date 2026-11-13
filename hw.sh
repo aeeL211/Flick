@@ -5,10 +5,14 @@
 MODDIR=${0%/*}
 P=debug.sf.hw
 F=$MODDIR/hw.prev
+GETPROP=/system/bin/getprop
+SETPROP=/system/bin/setprop
+# debug.sf.hw is a legacy, undocumented debug property. the effect is device-dependent and the
+# setprop call can be denied in shell mode; hw stays opt-in and its previous value is preserved.
 if [ "$1" = 1 ]; then
-  [ -f "$F" ] || getprop "$P" > "$F"
-  setprop "$P" 1
+  [ -f "$F" ] || "$GETPROP" "$P" > "$F"
+  "$SETPROP" "$P" 1
 elif [ -f "$F" ]; then
-  setprop "$P" "$(cat "$F")"
+  "$SETPROP" "$P" "$(cat "$F")"
   rm -f "$F"
 fi
