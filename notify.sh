@@ -8,7 +8,7 @@ S=$(cat "$MODDIR/flick.state" 2>/dev/null)
 H=1.0
 V=1.0
 if [ -r "$MODDIR/config" ]; then
-  while IFS== read -r K X; do
+  while IFS='=' read -r K X; do
     case $K in
       sens_h) H=$X ;;
       sens_v) V=$X ;;
