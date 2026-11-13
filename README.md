@@ -67,8 +67,10 @@ sama seperti sebelumnya.
 Token dibaca dari environment, disalin ke buffer tetap, lalu `FLICK_TOKEN` dihapus dari environment
 sebelum hook apa pun berjalan. Token tidak pernah ditulis ke log, config, atau pesan error. Jangan
 meletakkan token di argumen command line atau menyimpannya di log aplikasi. Token yang hilang atau
-tidak valid membuat daemon keluar dengan kode `2`; port tidak valid juga `2`; kegagalan bind
-termasuk `EADDRINUSE` menghasilkan kode `3`.
+tidak valid membuat daemon keluar dengan kode `10`; port yang hilang, tidak valid, atau di luar
+1..65535 juga `10`; kegagalan socket/bind/listen termasuk `EADDRINUSE` menghasilkan kode `11`.
+Kode lama tidak berubah: `1` sudah berjalan, `2` touchscreen tidak ditemukan, `3` uinput gagal,
+`5` daemonize gagal, dan `6` `/proc` tidak terlihat.
 
 | Perintah | Balasan | Keterangan |
 |---|---|---|

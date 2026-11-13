@@ -188,10 +188,16 @@ int main() {
   std::string cliPid =
       (fs::temp_directory_path() / ("flick-cli-" + std::to_string((long)getpid()) + ".pid")).string();
   unlink(cliPid.c_str());
-  check(runMain({"flick", "--listen", "8765", "--pidfile", cliPid, "--config", "/nonexistent"}) == 2,
-        "--listen without FLICK_TOKEN exits 2");
-  check(runMain({"flick", "--listen"}) == 2, "missing port value exits 2");
-  check(runMain({"flick", "--listen", "70000"}) == 2, "out-of-range port exits 2");
+  check(runMain({"flick", "--listen", "8765", "--pidfile", cliPid, "--config", "/nonexistent"}) == 10,
+        "--listen without FLICK_TOKEN exits 10");
+  check(runMain({"flick", "--listen"}) == 10, "missing port value exits 10");
+  check(runMain({"flick", "--listen", "0"}) == 10, "zero port exits 10");
+  check(runMain({"flick", "--listen", "70000"}) == 10, "out-of-range port exits 10");
+  check(runMain({"flick", "--listen", "not-a-port"}) == 10, "malformed port exits 10");
+  setenv("FLICK_TOKEN", shortToken.c_str(), 1);
+  check(runMain({"flick", "--listen", "8765", "--pidfile", cliPid, "--config", "/nonexistent"}) == 10,
+        "invalid token exits 10");
+  check(getenv("FLICK_TOKEN") == nullptr, "invalid token start scrubs the environment");
 
   int blocker = socket(AF_INET, SOCK_STREAM, 0);
   sockaddr_in ba;
@@ -209,8 +215,8 @@ int main() {
   if (blocked) {
     setenv("FLICK_TOKEN", token.c_str(), 1);
     check(runMain({"flick", "--listen", std::to_string((unsigned)ntohs(ba.sin_port)),
-                   "--pidfile", cliPid, "--config", "/nonexistent"}) == 3,
-          "bind failure exits 3");
+                   "--pidfile", cliPid, "--config", "/nonexistent"}) == 11,
+          "bind failure exits 11");
     check(getenv("FLICK_TOKEN") == nullptr, "failed bind start scrubs the token");
   }
   if (blocker >= 0) close(blocker);

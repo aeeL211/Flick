@@ -20,6 +20,11 @@ New command-line options:
 `--listen` may be combined with `--daemon`, `--pidfile`, and `--dev`. The listener is created
 before the daemonize fork, so all startup errors are reported on stderr with an exit code.
 
+Replies are one line of space-separated `key=value` fields. The order of the existing fields is
+stable. A client MUST ignore every `key=value` field it does not recognize. A newer revision may
+only append new fields at the end of a line; it may not move, rename, or change the meaning of an
+existing field. Such additive fields do not change `proto=1`.
+
 ### 1.1 Authentication token
 
 - Read from `FLICK_TOKEN`.
@@ -33,14 +38,43 @@ before the daemonize fork, so all startup errors are reported on stderr with an 
 
 ### 1.2 Startup failures
 
+The `--listen` path has its own exit codes so a client can distinguish a bad configuration from a
+port collision without changing any pre-existing code.
+
 | Condition | Exit code |
 |---|---|
-| `--listen` without a valid token | `2` |
-| `--listen` port malformed or outside 1..65535 | `2` |
-| Bind or listen fails, including `EADDRINUSE` | `3` |
-| Existing exits (already running, touchscreen, uinput, daemonize, hidden `/proc`) | unchanged |
+| `--listen` without a valid token | `10` |
+| `--listen` port missing, malformed, or outside 1..65535 | `10` |
+| Socket creation, `bind`, or `listen` fails, including `EADDRINUSE` | `11` |
+| Already running | `1` |
+| Touchscreen not found | `2` |
+| uinput setup failure | `3` |
+| Daemonize failure | `5` |
+| `/proc` hidden while `filter=1` | `6` |
 
 On these failures the daemon prints one `ERR ...` line on stderr. It never prints the token.
+
+#### 1.2.1 Actual startup order
+
+The source performs startup in the following order. This order is intentionally unchanged; moving a
+check would change which exit code wins when several failures are present.
+
+1. Parse arguments. A missing or invalid `--listen` value returns `10` immediately, before the
+   pid-file check.
+2. Check the pid file. `running()` reads the pid, calls `kill(pid, 0)`, and then requires the first
+   five bytes of `/proc/<pid>/comm` to be `flick`. A match returns `1`. See section 8.
+3. With `--listen` active, read and validate `FLICK_TOKEN`; failure returns `10`.
+4. Create the listener socket and call `bind()` on `127.0.0.1`, then `listen()`. Failure returns
+   `11`. This happens before the touchscreen, uinput, and daemonize steps.
+5. Split the config path and load the config file. A missing file is tolerated.
+6. Open `--dev` or scan `/dev/input/event0..31`. Failure returns `2`.
+7. Open `/dev/uinput` and clone the panel. Failure returns `3`.
+8. If `filter=1`, verify that `/proc` is visible; failure returns `6`.
+9. Wait 300 ms for the panel, then either daemonize (failure returns `5`) or stay in the foreground.
+10. Write the pid file, publish the initial state, and enter the event loop.
+
+Because the listener is created at step 4, a client that receives `11` may retry a different port.
+A failure at step 6 or later already had a working listener; the daemon closes it before exiting.
 
 ### 1.3 Notifications
 

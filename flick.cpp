@@ -13,7 +13,8 @@
 //
 // cli: flick --daemon --config file --pidfile file --dev device. once the daemon is up it prints one
 // ok line, otherwise one err line and an exit code. 1 already running, 2 touchscreen not found,
-// 3 uinput failure, 5 daemonize failure, 6 proc hidden.
+// 3 uinput failure, 5 daemonize failure, 6 proc hidden, 10 invalid --listen port or token,
+// 11 --listen socket/bind/listen failure.
 //
 // files live next to the config. config is key=value and is reloaded on change through inotify with
 // an mtime fallback. flick.pid holds the daemon pid. flick.state holds idle, active, or error
@@ -76,6 +77,8 @@ constexpr int ctlChunk = 512;
 constexpr int64_t ctlAuthMs = 2000;
 constexpr int64_t ctlLingerMs = 300;
 constexpr int64_t ctlPersistMs = 500;
+constexpr int exitCtlArgs = 10;
+constexpr int exitCtlListen = 11;
 constexpr char defPkgs[] = "com.dts.freefireth,com.dts.freefiremax";
 constexpr float curveRef = 0.04f;
 constexpr float accelMax = 1.8f;
@@ -1643,10 +1646,13 @@ int main(int argc, char **argv) {
     else if (!strcmp(argv[i], "--pidfile") && i + 1 < argc) pidPath = argv[++i];
     else if (!strcmp(argv[i], "--dev") && i + 1 < argc) dev = argv[++i];
     else if (!strcmp(argv[i], "--listen")) {
-      if (i + 1 >= argc) { say(2, "ERR listen port\n"); return 2; }
+      if (i + 1 >= argc) { say(2, "ERR listen port\n"); return exitCtlArgs; }
       char *end = nullptr;
       long p = strtol(argv[++i], &end, 10);
-      if (end == argv[i] || *end || p < 1 || p > 65535) { say(2, "ERR listen port\n"); return 2; }
+      if (end == argv[i] || *end || p < 1 || p > 65535) {
+        say(2, "ERR listen port\n");
+        return exitCtlArgs;
+      }
       listenPort = p;
     }
   }
@@ -1654,11 +1660,11 @@ int main(int argc, char **argv) {
 
   if (listenPort >= 0) {
     gCtlEnabled = true;
-    if (!ctlLoadToken()) { say(2, "ERR FLICK_TOKEN invalid\n"); return 2; }
+    if (!ctlLoadToken()) { say(2, "ERR FLICK_TOKEN invalid\n"); return exitCtlArgs; }
     if (ctlStart((unsigned)listenPort) < 0) {
       say(2, "ERR listen errno=%d\n", errno);
       ctlShutdown();
-      return 3;
+      return exitCtlListen;
     }
   }
 

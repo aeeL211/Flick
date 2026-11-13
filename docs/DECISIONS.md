@@ -112,3 +112,18 @@ change:
 
 The work stays on `feat/control-hold`, stacked on `feat/app-control-server`. No force-push is used,
 `main` is untouched, and the daemon tree is never committed into the application repository.
+
+## D-012: Distinct exit codes for --listen failures
+
+Chosen: exit `10` for a missing `--listen` value, an invalid port, or a missing/invalid token, and
+exit `11` for socket creation, `bind()`, or `listen()` failure. The old codes keep their meanings:
+`1` already running, `2` touchscreen missing, `3` uinput failure, `5` daemonize failure, and `6`
+hidden `/proc`.
+
+The existing startup order is deliberately preserved. Argument parsing happens before the pid-file
+check; token validation and bind happen after it but before touchscreen discovery and uinput. That
+means a bad port returns `10` even when another daemon is running, and a bind collision returns `11`
+before the host's missing touchscreen can return `2`. Moving these checks would change which error
+wins, so the order is documented instead of rearranged. A client that sees `11` can retry another
+port safely; a client that sees `2` or `3` must not keep retrying a port, because the listener was
+already created and then closed.
