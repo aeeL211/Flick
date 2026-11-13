@@ -385,6 +385,7 @@ const PK_RE=/^[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z][A-Za-z0-9_]*)+$/;
 // kunci sens_h dan sens_v tetap, di UI keduanya adalah Sensitivitas X dan Y
 const cfg={sens_h:1,sens_v:1,curve:0,zone:0,orient:1,smooth:0,strength:40,resp:85,hw:0,filter:1,pkgs:DEF_PK};
 let link=true, running=false, busy=false, busyText='', state='', prevS=null, candS=null, seq=0, floorSeq=0;
+let refreshActive=false, refreshChain=Promise.resolve(), pollTimer=0;
 const $=id=>document.getElementById(id);
 const all=sel=>document.querySelectorAll(sel);
 
@@ -567,7 +568,7 @@ function commitPk(v){
 
 // pemilih aplikasi: daftar aplikasi terpasang dari ksu.listPackages, dicari dengan nama atau package
 const apps={user:[],system:[]}, pLoaded={user:false,system:false};
-let pOpen=false, pQ='', pSys=false, pLoading='', pFocus=null, pChain=Promise.resolve();
+let pOpen=false, pQ='', pSys=false, pLoading='', pFocus=null, pChain=Promise.resolve(), pqT=0;
 const tick=()=>new Promise(r=>requestAnimationFrame(()=>setTimeout(r,0)));
 async function loadKind(kind){
   let names=[];
@@ -636,6 +637,7 @@ function drawPick(){
     :ul.children.length?'':'Tidak ada aplikasi yang cocok.');
 }
 function openPick(){
+  clearTimeout(pqT);pqT=0;
   pOpen=true;pQ='';pSys=false;pLoaded.user=pLoaded.system=false;
   $('pq').value='';$('pSys').setAttribute('aria-checked','false');
   pFocus=document.activeElement;
@@ -646,6 +648,7 @@ function openPick(){
   ensureApps();
 }
 function closePick(){
+  clearTimeout(pqT);pqT=0;
   pOpen=false;
   $('pov').classList.remove('open');$('pov').setAttribute('aria-hidden','true');
   document.body.style.overflow='';
@@ -677,6 +680,16 @@ function drawArt(){
   });
   all('[data-cv]').forEach(e=>{if(!e._k){e._k=1;e.innerHTML=curveSVG(e.dataset.cv)}});
 }
+// repaint only one slider and its value label; used while dragging so the rest of the page is untouched
+function paintSlider(k){
+  const s=document.querySelector('.slider[data-k="'+k+'"]');
+  if(!s)return;
+  const mn=+s.dataset.min,mx=+s.dataset.max,th=s.querySelector('.thumb');
+  s.style.setProperty('--r',(cfg[k]-mn)/(mx-mn));
+  th.setAttribute('aria-valuemin',mn);th.setAttribute('aria-valuemax',mx);th.setAttribute('aria-valuenow',cfg[k]);
+  const v=document.querySelector('[data-show="'+k+'"]');
+  if(v)v.textContent=k.startsWith('sens')?cfg[k].toFixed(1):cfg[k];
+}
 function render(){
   drawArt();
   $('cvDesc').textContent=CV_DESC[cfg.curve]||CV_DESC[0];
@@ -698,6 +711,10 @@ function render(){
   setCl($('pkBox'),!!cfg.filter);
   setCl($('pkOff'),!cfg.filter);
   drawPk();
+  renderStatus();
+}
+// status-only repaint for the 3 s poll: the config did not change, so no control or artwork is touched
+function renderStatus(){
   const err=state.startsWith('error:'), act=running&&state==='active';
   $('badge').textContent=!running?'Nonaktif':err?'Error':'Aktif';
   $('dot').className='dot'+(!running?'':err?' err':act?' ok on':' ok');
@@ -722,7 +739,7 @@ async function saveCfg(){
 
 // hasil status yang dimulai sebelum sebuah tombol ditekan (my<=floorSeq) sudah basi, dibuang supaya tidak membalik status
 // dan memicu toast ganda. bagian config tetap dibaca, kalau tidak pemuatan awal bisa hilang
-async function refresh(full=true,now=false){
+async function refreshOnce(full=true,now=false){
   const my=++seq;
   const r=await ctl('status');
   const stale=my<=floorSeq;
@@ -739,12 +756,23 @@ async function refresh(full=true,now=false){
   if(full){link=cfg.sens_h===cfg.sens_v;syncInfo()}
   if(r.errno!==0&&r.stderr)log(r.stderr);
   if(seen)announce(now);
-  render();
+  full?render():renderStatus();
+}
+// all status reads go through one chain: a poll never overlaps a button refresh, and a button refresh
+// is never dropped because a poll happened to be in flight.
+function refresh(full=true,now=false){
+  const run=async()=>{
+    refreshActive=true;
+    try{await refreshOnce(full,now)}finally{refreshActive=false}
+  };
+  const p=refreshChain.then(run,run);
+  refreshChain=p.catch(()=>{});
+  return p;
 }
 async function guarded(txt,fn){
   if(busy)return;
   busy=true;busyText=txt;floorSeq=++seq;render();
-  try{await fn()}finally{busy=false;await refresh(false,true)}
+  try{await fn()}finally{busy=false;await refresh(false,true).catch(()=>{});renderStatus()}
 }
 const start=()=>guarded('Mengaktifkan…',async()=>{
   await saveCfg();
@@ -772,7 +800,8 @@ all('.slider').forEach(s=>{
     cfg[k]=v;
     if(link&&k==='sens_h')cfg.sens_v=v;
     if(link&&k==='sens_v')cfg.sens_h=v;
-    render();
+    paintSlider(k);
+    if(link)paintSlider(k==='sens_h'?'sens_v':'sens_h');
   };
   th.addEventListener('pointerdown',e=>{
     drag=true;sx=e.clientX;sv=cfg[k];s.classList.add('drag');
@@ -825,7 +854,7 @@ $('pl').addEventListener('click',e=>{
   else cur.push(b.dataset.p);
   if(commitPk(cur.join(',')))syncPick();
 });
-$('pq').addEventListener('input',e=>{pQ=e.target.value;drawPick()});
+$('pq').addEventListener('input',e=>{pQ=e.target.value;clearTimeout(pqT);pqT=setTimeout(()=>{pqT=0;drawPick()},120)});
 $('pq').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();e.target.blur()}});
 $('pSys').addEventListener('click',()=>{pSys=!pSys;$('pSys').setAttribute('aria-checked',pSys?'true':'false');drawPick();ensureApps()});
 $('pOk').addEventListener('click',closePick);
@@ -834,8 +863,21 @@ $('pov').addEventListener('click',e=>{if(e.target===$('pov'))closePick()});
 
 $('toggle').addEventListener('click',()=>running?stop():start());
 $('kill').addEventListener('click',stop);
-refresh().then(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.add('ready'))));
-setInterval(()=>{if(!busy)refresh(false)},3000);
+function startPoll(){
+  if(pollTimer)return;
+  pollTimer=setInterval(()=>{if(!busy&&!refreshActive)refresh(false)},3000);
+}
+function stopPoll(){
+  if(!pollTimer)return;
+  clearInterval(pollTimer);pollTimer=0;
+}
+if(!document.hidden)startPoll();
+document.addEventListener('visibilitychange',()=>{
+  if(document.hidden){stopPoll();return}
+  if(!busy&&!refreshActive)refresh(false);
+  startPoll();
+});
+refresh().catch(()=>{}).then(()=>requestAnimationFrame(()=>requestAnimationFrame(()=>document.body.classList.add('ready'))));
 </script>
 </body>
 </html>
