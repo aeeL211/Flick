@@ -88,3 +88,27 @@ Chosen: work happens on `feat/app-control-server`, created from the current opti
 because that branch contains the baseline workflow and hardening changes this work builds on. The
 pull request targets the existing optimization branch (stacked review), not `main`; `main` is not
 modified and no force-push is used.
+
+## D-011: Plan for hold leases and listen failure codes
+
+Chosen plan for `feat/control-hold`, reviewed against the current `flick.cpp` before any code
+change:
+
+1. Add exit code `10` for an invalid `--listen` port or missing/invalid token and `11` for socket,
+   bind, or listen failure. Keep the existing `1`, `2`, `3`, `5`, and `6` meanings and leave the
+   startup order unchanged; document that order and the `/proc/<pid>/comm` prefix used by the
+   already-running check.
+2. Make every accepted pending connection replace the previous pending one. A successful `HELLO`
+   remains the only way to replace an authenticated client.
+3. Add a connection-bound `HOLD [1..120]` lease (default 30 s) and `UNHOLD`. Effective pause is the
+   PAUSE flag or an active hold; the lease is released on client loss, replacement, expiry, or STOP.
+   The existing PAUSE release path, which waits for `gDown == 0`, is reused. The hold deadline joins
+   the existing poll deadline calculation.
+4. Extend `HELLO`, `STATUS`, and `EVT` additively at the end of each line while keeping `proto=1`.
+   Document the `err` sanitization rule and require clients to ignore unknown key=value fields.
+5. Cover the new behavior in `ctrl_test.cpp` without changing `selftest.cpp` or `proc_test.cpp`;
+   run every build and test through GitHub Actions, then tag `v0.10.0-rc2` and mark the release as a
+   prerelease.
+
+The work stays on `feat/control-hold`, stacked on `feat/app-control-server`. No force-push is used,
+`main` is untouched, and the daemon tree is never committed into the application repository.
