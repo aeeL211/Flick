@@ -136,7 +136,7 @@ jobs:
           BIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
           mkdir -p out/system/bin metrics
           COMMON=(
-            -std=c++17 -O2 -DNDEBUG -D_FORTIFY_SOURCE=2
+            -std=c++17 -Os -DNDEBUG -D_FORTIFY_SOURCE=2
             -ffp-contract=off -fno-exceptions -fno-rtti -fvisibility=hidden
             -fstack-protector-strong -fno-unwind-tables -fno-asynchronous-unwind-tables
             -ffunction-sections -fdata-sections -ffile-prefix-map="$PWD"=.
