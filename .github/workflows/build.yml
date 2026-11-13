@@ -201,7 +201,10 @@ jobs:
           grep -qE '^version=v[0-9]+\.[0-9]+\.[0-9]+$' module.prop
 
       - name: Set reproducible timestamp
-        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+        run: |
+          # Tie the zip timestamp to the last module.prop change. The packaged files do not depend on
+          # documentation or CI commits, so those commits must not change the artifact hash.
+          echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct -- module.prop)" >> "$GITHUB_ENV"
 
       - name: Stage module
         run: |
