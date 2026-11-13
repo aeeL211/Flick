@@ -1,90 +1,246 @@
 name: Build plugin
+
 on:
   push:
-    branches: [main]
+    branches: ['**']
     tags: ['v*']
+  pull_request:
   workflow_dispatch:
+
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  selftest:
+  test:
     runs-on: ubuntu-latest
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
-      - name: Run on the host
+
+      - name: Install shellcheck
         run: |
-          set -e
-          g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -fno-exceptions -fno-rtti selftest.cpp -o selftest-host
-          ./selftest-host
-      - name: Build for the phone
+          if ! command -v shellcheck >/dev/null 2>&1; then
+            sudo apt-get update -qq
+            sudo apt-get install -y shellcheck
+          fi
+          shellcheck --version
+
+      - name: Host selftest
         run: |
-          set -e
-          BIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
+          set -euo pipefail
+          g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Werror \
+            -fno-exceptions -fno-rtti selftest.cpp -o selftest-host -lm
+          ./selftest-host | tee selftest-host.log
+
+      - name: Host selftest with sanitizers
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O1 -g -ffp-contract=off -Wall -Wextra -Werror \
+            -fno-exceptions -fno-rtti -fno-omit-frame-pointer \
+            -fsanitize=address,undefined selftest.cpp -o selftest-san -lm
+          ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            ./selftest-san | tee selftest-san.log
+
+      - name: Locate Android NDK
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
+          if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
+            NDK=$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/ndk" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+              | sort -V | tail -n 1)
+          fi
+          if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
+            echo "::error::Android NDK not found"
+            exit 1
+          fi
+          echo "NDK=$NDK" >> "$GITHUB_ENV"
+          grep '^Pkg.Revision' "$NDK/source.properties"
+
+      - name: Cross-build selftest (arm64 + arm)
+        run: |
+          set -euo pipefail
+          BIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
           mkdir -p out-test
           for t in aarch64-linux-android24:arm64 armv7a-linux-androideabi24:arm; do
-            $BIN/${t%%:*}-clang++ -Os -ffp-contract=off -fno-exceptions -fno-rtti -nostdlib++ \
-              selftest.cpp -o out-test/selftest.${t##*:} -lm
+            "$BIN/${t%%:*}-clang++" -std=c++17 -O2 -ffp-contract=off \
+              -Wall -Wextra -Werror -fno-exceptions -fno-rtti -nostdlib++ \
+              selftest.cpp -o "out-test/selftest.${t##*:}" -lm
           done
+
+      - name: Shell syntax and shellcheck
+        run: |
+          set -euo pipefail
+          for f in *.sh; do sh -n "$f"; done
+          shellcheck -s sh -S warning ctl.sh customize.sh hw.sh notify.sh uninstall.sh
+
+      - name: WebUI JavaScript syntax
+        run: python3 tools/check_webui.py index.html
+
       - uses: actions/upload-artifact@v4
         with:
           name: Selftest
-          path: out-test/selftest.*
+          path: |
+            out-test/selftest.*
+            selftest-host.log
+            selftest-san.log
+
   build:
     runs-on: ubuntu-latest
+    needs: test
     steps:
       - uses: actions/checkout@v4
+
+      - name: Locate Android NDK
+        run: |
+          set -euo pipefail
+          NDK="${ANDROID_NDK_HOME:-${ANDROID_NDK_LATEST_HOME:-}}"
+          if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
+            NDK=$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/ndk" -mindepth 1 -maxdepth 1 -type d 2>/dev/null \
+              | sort -V | tail -n 1)
+          fi
+          if [ -z "$NDK" ] || [ ! -d "$NDK" ]; then
+            echo "::error::Android NDK not found"
+            exit 1
+          fi
+          echo "NDK=$NDK" >> "$GITHUB_ENV"
+          grep '^Pkg.Revision' "$NDK/source.properties"
+
       - name: Compile (arm64 + arm)
         run: |
-          set -e
-          BIN=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin
-          mkdir -p out/system/bin out/webroot
+          set -euo pipefail
+          BIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+          mkdir -p out/system/bin metrics
+          COMMON=(
+            -std=c++17 -O2 -DNDEBUG -D_FORTIFY_SOURCE=2
+            -ffp-contract=off -fno-exceptions -fno-rtti -fvisibility=hidden
+            -fstack-protector-strong -fno-unwind-tables -fno-asynchronous-unwind-tables
+            -ffunction-sections -fdata-sections -ffile-prefix-map="$PWD"=.
+            -Wall -Wextra -Werror -Wformat=2 -Wshadow -Wundef -Wcast-align -Wpointer-arith
+            -pie -nostdlib++
+            -Wl,--gc-sections -Wl,--as-needed -Wl,--build-id=none
+            -Wl,-z,relro -Wl,-z,now -Wl,-z,noexecstack -Wl,-z,max-page-size=16384
+          )
+          printf '%s\n' "${COMMON[*]}" > metrics/flags.txt
           for t in aarch64-linux-android24:arm64 armv7a-linux-androideabi24:arm; do
-            $BIN/${t%%:*}-clang++ -Os -ffp-contract=off -DNDEBUG -Wall -Wextra -s \
-              -nostdlib++ \
-              -fno-exceptions -fno-rtti -fvisibility=hidden \
-              -fno-unwind-tables -fno-asynchronous-unwind-tables \
-              -ffunction-sections -fdata-sections \
-              -Wl,--gc-sections -Wl,--build-id=none \
-              flick.cpp -o out/system/bin/flick.${t##*:} -lm
+            "$BIN/${t%%:*}-clang++" "${COMMON[@]}" flick.cpp \
+              -o "out/system/bin/flick.${t##*:}" -lm
           done
-          file out/system/bin/flick.*
-          ls -l out/system/bin
-      - name: Verify no extra shared libraries
+          "$BIN/llvm-size" out/system/bin/flick.* | tee metrics/size-unstripped.txt
+          "$BIN/llvm-strip" --strip-all out/system/bin/flick.*
+          "$BIN/llvm-size" out/system/bin/flick.* | tee metrics/size-stripped.txt
+          ls -l out/system/bin | tee -a metrics/size-stripped.txt
+
+      - name: Verify ELF
         run: |
-          set -e
-          READELF=$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
-          for f in out/system/bin/flick.*; do
-            $READELF -d $f | grep NEEDED || true
-            $READELF -lW $f | grep LOAD || true
-            if $READELF -d $f | grep NEEDED | grep -vE 'lib(c|m|dl)\.so'; then
-              echo "::error::$f depends on a library that does not exist on the phone"
-              exit 1
-            fi
+          set -euo pipefail
+          READELF=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-readelf
+          for f in out/system/bin/flick.arm64 out/system/bin/flick.arm; do
+            echo "== $f"
+            "$READELF" -d "$f" | grep -E 'NEEDED|RPATH|RUNPATH|TEXTREL|BIND_NOW' || true
+            "$READELF" -lW "$f" | grep -E 'LOAD|GNU_RELRO|GNU_STACK' || true
+
+            case $f in
+              *.arm64)
+                "$READELF" -h "$f" | grep -q 'Class:.*ELF64'
+                "$READELF" -h "$f" | grep -q 'Machine:.*AArch64'
+                ;;
+              *.arm)
+                "$READELF" -h "$f" | grep -q 'Class:.*ELF32'
+                "$READELF" -h "$f" | grep -q 'Machine:.*ARM'
+                ;;
+            esac
+            "$READELF" -h "$f" | grep -q 'Type:.*DYN' || { echo "::error::$f is not PIE"; exit 1; }
+            "$READELF" -d "$f" | grep -q 'BIND_NOW' || { echo "::error::$f is not BIND_NOW"; exit 1; }
+            "$READELF" -d "$f" | grep -q 'TEXTREL' && { echo "::error::$f has TEXTREL"; exit 1; } || true
+            "$READELF" -d "$f" | grep -qE 'RPATH|RUNPATH' && { echo "::error::$f has RPATH/RUNPATH"; exit 1; } || true
+            "$READELF" -lW "$f" | grep -q 'GNU_RELRO' || { echo "::error::$f is not RELRO"; exit 1; }
+            "$READELF" -lW "$f" | grep -q 'GNU_STACK' || { echo "::error::$f has no GNU_STACK"; exit 1; }
+            ! "$READELF" -lW "$f" | grep -q 'GNU_STACK.*RWE' || { echo "::error::$f has an executable stack"; exit 1; }
+            ALIGN=$("$READELF" -lW "$f" | awk '$1 == "LOAD" { print $NF; exit }')
+            [ -n "$ALIGN" ] || { echo "::error::$f has no LOAD segment"; exit 1; }
+            [ $((ALIGN)) -ge 16384 ] || { echo "::error::$f LOAD alignment $ALIGN < 16 KB"; exit 1; }
+
+            BAD=$("$READELF" -d "$f" | sed -n 's/.*Shared library: \[\(.*\)\]/\1/p' \
+              | grep -vE '^(libc|libm|libdl)\.so$' || true)
+            [ -z "$BAD" ] || { echo "::error::$f depends on unexpected libraries: $BAD"; exit 1; }
           done
-      - name: Check module.prop
+
+      - name: Validate module.prop
         run: |
-          grep -qE '^id=[a-zA-Z][a-zA-Z0-9._-]+$' module.prop || { echo "::error::module.prop id is invalid"; exit 1; }
-          grep -qE '^versionCode=[0-9]+$' module.prop || { echo "::error::versionCode must be an integer"; exit 1; }
-          grep -qE '^axeronPlugin=[0-9]+$' module.prop || { echo "::error::axeronPlugin must be a number"; exit 1; }
+          set -euo pipefail
+          grep -qE '^id=[a-zA-Z][a-zA-Z0-9._-]+$' module.prop
+          grep -qE '^versionCode=[0-9]+$' module.prop
+          grep -qE '^axeronPlugin=[0-9]+$' module.prop
+          grep -qE '^version=v[0-9]+\.[0-9]+\.[0-9]+$' module.prop
+
+      - name: Set reproducible timestamp
+        run: echo "SOURCE_DATE_EPOCH=$(git log -1 --format=%ct)" >> "$GITHUB_ENV"
+
       - name: Stage module
         run: |
-          set -e
-          cp module.prop customize.sh uninstall.sh hw.sh ctl.sh notify.sh out/
-          cp index.html out/webroot/
-          sed -i 's/\r$//' out/module.prop out/*.sh
-          for f in out/*.sh; do sh -n "$f"; done
-          chmod 755 out/*.sh out/system/bin/flick.*
-      - name: Package
+          set -euo pipefail
+          mkdir -p stage/system/bin stage/webroot
+          cp module.prop customize.sh uninstall.sh hw.sh ctl.sh notify.sh stage/
+          cp index.html stage/webroot/
+          cp out/system/bin/flick.arm out/system/bin/flick.arm64 stage/system/bin/
+          sed -i 's/\r$//' stage/module.prop stage/*.sh stage/webroot/index.html
+          chmod 755 stage/*.sh stage/system/bin/flick.*
+          for f in stage/*.sh; do sh -n "$f"; done
+          find stage -type f -printf '%m %s %p\n' | sort
+
+      - name: Package (deterministic, twice)
         run: |
-          VER=$(grep '^version=' module.prop | cut -d= -f2)
-          cd out && zip -r ../Flick-$VER.zip .
+          set -euo pipefail
+          python3 tools/package.py --root stage --out dist
+          python3 tools/package.py --root stage --out dist-repro
+          cmp dist/Flick-*.zip dist-repro/Flick-*.zip
+          sha256sum -c dist/Flick-*.zip.sha256
+          unzip -l dist/Flick-*.zip
+
+      - name: Build info
+        run: |
+          set -euo pipefail
+          {
+            echo "commit=$(git rev-parse HEAD)"
+            echo "ref=$GITHUB_REF"
+            echo "run=https://github.com/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo "ndk=$(grep '^Pkg.Revision' "$NDK/source.properties" | cut -d= -f2 | tr -d ' ')"
+            echo "flags=$(cat metrics/flags.txt)"
+            echo "package=$(basename dist/Flick-*.zip)"
+            echo "package_sha256=$(cut -d' ' -f1 dist/Flick-*.zip.sha256)"
+            echo "arm64_bytes=$(stat -c %s stage/system/bin/flick.arm64)"
+            echo "arm_bytes=$(stat -c %s stage/system/bin/flick.arm)"
+          } | tee dist/build-info.txt
+          cp metrics/*.txt dist/
+
       - uses: actions/upload-artifact@v4
         with:
           name: Flick
-          path: Flick-*.zip
-      - name: Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+          path: |
+            dist/Flick-*.zip
+            dist/Flick-*.zip.sha256
+            dist/Flick-*.manifest.txt
+            dist/build-info.txt
+            dist/*.txt
+
+  release:
+    runs-on: ubuntu-latest
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
         with:
-          files: Flick-*.zip
+          name: Flick
+          path: dist
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/Flick-*.zip
+            dist/Flick-*.zip.sha256
+            dist/Flick-*.manifest.txt
