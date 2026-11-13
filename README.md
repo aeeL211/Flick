@@ -57,7 +57,7 @@ sebelum semua pemeriksaan ini lulus:
 - `shellcheck` dan `sh -n` untuk semua script;
 - `node --check` untuk JavaScript di `index.html`;
 - build daemon `arm64` + `arm`, verifikasi ELF/PIE/RELRO/BIND_NOW/16 KB, lalu packaging deterministik
-  dengan `SHA256SUMS`.
+  dengan checksum `.sha256`.
 
 Artifact `Flick` berisi `Flick-v*.zip`, checksum, manifest, dan `build-info.txt`. Detail hasil
 pengukuran ada di [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
