@@ -44,6 +44,12 @@
 #include <time.h>
 #include <unistd.h>
 
+// The proc paths are compile-time constants in production. selftest builds may point them at a
+// fake tree to exercise foreground detection without touching the host's real /proc.
+#ifndef FLICK_PROC_ROOT
+#define FLICK_PROC_ROOT "/proc"
+#endif
+
 constexpr int maxSlot = 32;
 constexpr int maxPid = 8192;
 constexpr int tickMs = 3000;
@@ -64,6 +70,7 @@ static volatile sig_atomic_t gStop = 0;
 static void onSignal(int) { gStop = 1; }
 
 static char gDir[256] = ".";
+static constexpr const char *gProcRoot = FLICK_PROC_ROOT;
 
 // origin of the calculation. the frame factor (the blend of sens_h and sens_v by the direction of the
 // finger, the speed curve) and the filter parameters follow the Magic Touch feature of the Game
@@ -212,6 +219,10 @@ static int gAdjErr = 0;
 static int gPidBuf[3][maxPid];
 static int *gPrev = gPidBuf[0], *gSnap = gPidBuf[1], *gCur = gPidBuf[2];
 static int gPrevCount = 0;
+static bool gProcStale = false;  // a foreground period skipped scans, so the pid cache may be old
+#ifdef FLICK_PROC_TEST
+static unsigned gProcScans = 0;
+#endif
 
 static bool pkgChar(char ch) {
   return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' ||
@@ -249,6 +260,7 @@ static void setPkgs(const char *s) {
   gAdjCount = 0;
   gAdjErr = 0;
   gPrevCount = 0;
+  gProcStale = false;
 }
 
 static int cmpInt(const void *a, const void *b) { return *(const int *)a - *(const int *)b; }
@@ -266,7 +278,7 @@ struct DirEntry {
 // straight into a static buffer so the polling tick never allocates.
 static int readPids(int *out, int max) {
   alignas(8) static char buf[16384];
-  int fd = open("/proc", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+  int fd = open(gProcRoot, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
   if (fd < 0) return -1;
   int n = 0;
   for (;;) {
@@ -289,8 +301,8 @@ static int readPids(int *out, int max) {
 
 // 1 is a listed app, 0 is not one and final, -1 is not renamed yet so look again next tick
 static int checkPid(int pid) {
-  char p[32], b[pkgLen + 32];
-  snprintf(p, sizeof p, "/proc/%d/cmdline", pid);
+  char p[128], b[pkgLen + 32];
+  snprintf(p, sizeof p, "%s/%d/cmdline", gProcRoot, pid);
   int fd = open(p, O_RDONLY | O_CLOEXEC);
   if (fd < 0) return 0;
   ssize_t n = read(fd, b, sizeof b - 1);
@@ -304,6 +316,9 @@ static int checkPid(int pid) {
 
 // looks at pids that appeared since the last tick and keeps oom_score_adj open for listed apps
 static void scanProc() {
+#ifdef FLICK_PROC_TEST
+  gProcScans++;
+#endif
   int n = readPids(gCur, maxPid);
   if (n < 0) return;
   gAdjErr = 0;
@@ -314,8 +329,8 @@ static void scanProc() {
     if (j < gPrevCount && gPrev[j] == pid) { gSnap[sn++] = pid; continue; }
     int r = checkPid(pid);
     if (r == 1 && gAdjCount < maxPkgs) {
-      char p[40];
-      snprintf(p, sizeof p, "/proc/%d/oom_score_adj", pid);
+      char p[128];
+      snprintf(p, sizeof p, "%s/%d/oom_score_adj", gProcRoot, pid);
       int fd = open(p, O_RDONLY | O_CLOEXEC);
       if (fd < 0) { gAdjErr = errno; continue; }
       gAdjFds[gAdjCount++] = fd;
@@ -328,8 +343,8 @@ static void scanProc() {
   gPrevCount = sn;
 }
 
-static bool inGame() {
-  scanProc();
+// checks only the already tracked oom_score_adj fds, closing ones whose process is gone
+static bool trackedForeground() {
   bool fg = false;
   for (int i = 0; i < gAdjCount;) {
     char b[16];
@@ -344,6 +359,22 @@ static bool inGame() {
     i++;
   }
   return fg;
+}
+
+// While a tracked app is already foreground the answer cannot be false, so the expensive /proc walk
+// is skipped. If a foreground period skipped scans, the pid cache may be old (pid reuse), so the
+// first scan after it is a full one. Idle ticks keep the incremental scan from the original design.
+static bool inGame() {
+  if (trackedForeground()) {
+    gProcStale = true;
+    return true;
+  }
+  if (gProcStale) {
+    gPrevCount = 0;
+    gProcStale = false;
+  }
+  scanProc();
+  return trackedForeground();
 }
 
 static bool hasBit(const unsigned char *b, int n) { return b[n / 8] & (1 << (n % 8)); }
@@ -662,6 +693,15 @@ static int activate() {
     close(fd);
     return -1;
   }
+  // the check and the grab are not atomic. re-check after the grab and release at once when a finger
+  // landed in the window, so the daemon never holds the panel while a touch is down.
+  t = touching(fd);
+  if (t != 0) {
+    ioctl(fd, EVIOCGRAB, 0);
+    if (t < 0) { snprintf(e, sizeof e, "error:touch errno=%d", errno); setState(e); }
+    close(fd);
+    return t;
+  }
   while (read(fd, gBatch, sizeof gBatch) > 0) {}
   memset(gSlots, 0, sizeof gSlots);
   gCurSlot = 0;
@@ -899,7 +939,9 @@ int main(int argc, char **argv) {
     okLine(procs, cfg);
   }
 
-  setpriority(PRIO_PROCESS, 0, -8);
+  // best effort: some shell configurations deny a negative nice value. correctness does not depend
+  // on it, the event loop only sleeps in poll and never busy-waits.
+  (void)setpriority(PRIO_PROCESS, 0, -8);
   struct sigaction sa;
   memset(&sa, 0, sizeof sa);
   sa.sa_handler = onSignal;

@@ -71,6 +71,14 @@ jobs:
               selftest.cpp -o "out-test/selftest.${t##*:}" -lm
           done
 
+      - name: Foreground proc scan test
+        run: |
+          set -euo pipefail
+          g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Werror \
+            -DFLICK_PROC_TEST -DFLICK_PROC_ROOT='"/tmp/flick-proc-test"' \
+            proc_test.cpp -o proc-test
+          ./proc-test | tee proc-test.log
+
       - name: Shell syntax and shellcheck
         run: |
           set -euo pipefail
@@ -87,6 +95,7 @@ jobs:
             out-test/selftest.*
             selftest-host.log
             selftest-san.log
+            proc-test.log
 
   build:
     runs-on: ubuntu-latest
