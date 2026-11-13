@@ -2,8 +2,7 @@
 // loopback socket on port 0, and drives ctlService() directly so every deadline, reply, and config
 // write can be checked without a phone, a touchscreen, or a sleep of several seconds.
 //
-//   g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Werror -fno-exceptions -fno-rtti \
-//       ctrl_test.cpp -o ctrl-test -lm
+//   g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Werror ctrl_test.cpp -o ctrl-test -lm
 //
 // the token below is synthetic and only exists in this test file.
 #define main flickMain
