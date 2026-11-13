@@ -1429,7 +1429,12 @@ static bool ctlHandleLine(CtlConn &c, int64_t now) {
       ctlReply(c, "ERR cmd\n");
       return false;
     }
-    bool ok = !strncmp(line, "HELLO ", 6) && tokenEqual(line + 6, strlen(line + 6));
+    bool ok = false;
+    if (!strncmp(line, "HELLO", 5) && (line[5] == ' ' || line[5] == 0)) {
+      const char *t = line + 5;
+      while (*t == ' ') t++;
+      ok = *t && tokenEqual(t, strlen(t));
+    }
     if (!ok) {
       ctlFailAuth(c, now);
       wipeMem(c.in, sizeof c.in);
@@ -1467,9 +1472,10 @@ static bool ctlHandleLine(CtlConn &c, int64_t now) {
     ctlReply(c, "STATS grabs=%llu releases=%llu syn_dropped=%llu scans=%llu\n", gStatGrabs,
              gStatReleases, gStatSynDropped, gProcScans);
   } else if (!strcmp(line, "STOP")) {
-    ctlReply(c, "OK\n");
     c.stopWhenDrained = true;
     c.subscribed = false;
+    ctlReply(c, "OK\n");
+    if (c.fd < 0) gStop = 1;
   } else {
     ctlReply(c, "ERR cmd\n");
   }

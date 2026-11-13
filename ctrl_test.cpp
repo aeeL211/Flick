@@ -446,9 +446,9 @@ int main() {
   int n = connectClient();
   check(n >= 0, "replacement client connects");
   serviceAt(r);
-  check(sendAll(n, "HELLO " + token + "\n"), "replacement HELLO is sent");
+  check(sendAll(n, "HELLO  " + token + "\n"), "replacement HELLO with extra spacing is sent");
   serviceAt(r + 1);
-  expectLine(n, hello, "replacement client authenticates");
+  expectLine(n, hello, "replacement client authenticates across extra spacing");
   check(gCtlClient.fd >= 0 && !gCtlClient.subscribed, "replacement starts unsubscribed");
   expectClosed(a, "old authenticated client is closed on replacement");
   close(a);

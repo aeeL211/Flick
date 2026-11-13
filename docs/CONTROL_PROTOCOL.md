@@ -87,7 +87,7 @@ the 1024-byte line limit. Violations are reported as `ERR <key> length` when a k
 HELLO <token>
 ```
 
-Success reply:
+One or more spaces may separate `HELLO` and the token. Success reply:
 
 ```text
 OK flick=<version> proto=1
@@ -268,8 +268,9 @@ STOP
 
 The server queues `OK`, flushes it, closes all control sockets, and requests a clean daemon exit.
 The normal exit path releases the grab, restores `hw.sh` state, waits briefly for hooks, destroys
-the uinput device, removes the pid file, and removes the state file. If the reply cannot be
-flushed because the peer vanished, the daemon still exits.
+the uinput device, removes the pid file, and removes the state file. If the reply cannot be queued
+because the output buffer is full or cannot be flushed because the peer vanished, the daemon still
+exits.
 
 ## 4. Daemon integration
 
