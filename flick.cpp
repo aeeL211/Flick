@@ -1347,7 +1347,8 @@ static bool ctlAccept(int64_t now) {
     socklen_t sl = sizeof sa;
     int fd = accept(gCtlListen, reinterpret_cast<sockaddr *>(static_cast<void *>(&sa)), &sl);
     if (fd < 0) { if (errno == EINTR) continue; return fresh; }
-    if (gCtlPending.fd >= 0 && !gCtlPending.failed) { close(fd); continue; }
+    // A new pending connection always wins the handshake slot. It never touches the authenticated
+    // client; only a successful HELLO can replace that one.
     if (gCtlPending.fd >= 0) ctlClose(gCtlPending);
     ctlFdSetup(fd);
     ctlConnReset(gCtlPending);

@@ -463,17 +463,36 @@ int main() {
   serviceAt(r + 2);
   expectLine(n, "PONG", "replacement client is usable");
 
+  int p1 = connectClient();
+  check(p1 >= 0, "first extra pending client connects");
+  serviceAt(r + 3);
+  check(gCtlPending.fd >= 0 && gCtlPending.acceptedMs == r + 3,
+        "first extra connection occupies the pending slot");
+  int p2 = connectClient();
+  check(p2 >= 0, "second extra pending client connects");
+  serviceAt(r + 4);
+  check(gCtlPending.fd >= 0 && gCtlPending.acceptedMs == r + 4,
+        "new pending connection replaces the old pending slot");
+  expectClosed(p1, "old pending connection is closed on replacement");
+  close(p1);
+  check(sendAll(n, "PING\n"), "authenticated client PINGs during pending replacement");
+  serviceAt(r + 5);
+  expectLine(n, "PONG", "pending replacement does not disturb the authenticated client");
+  close(p2);
+  serviceAt(r + 6);
+  check(gCtlPending.fd < 0, "closed pending connection is released");
+
   std::string maxLine(ctlLineMax, 'A');
   check(sendAll(n, maxLine + "\n"), "1024-byte line is sent");
-  serviceAt(r + 3);
+  serviceAt(r + 20);
   expectLine(n, "ERR cmd", "1024-byte line is accepted and parsed");
 
   int o = connectClient();
   check(o >= 0, "overlong-line client connects");
-  serviceAt(r + 10);
+  serviceAt(r + 30);
   check(gCtlPending.fd >= 0, "overlong-line connection is pending");
   check(sendAll(o, std::string(ctlLineMax + 1, 'B')), "1025-byte line is sent");
-  serviceAt(r + 11);
+  serviceAt(r + 31);
   check(gCtlPending.fd < 0, "1025-byte line closes the connection");
   expectClosed(o, "overlong-line peer sees the close");
   close(o);

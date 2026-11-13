@@ -84,11 +84,12 @@ Kode lama tidak berubah: `1` sudah berjalan, `2` touchscreen tidak ditemukan, `3
 | `STATS` | `STATS grabs=... releases=... ...` | Statistik proses untuk diagnostik. |
 | `STOP` | `OK` | Meminta daemon berhenti bersih setelah balasan terkirim. |
 
-Satu klien terautentikasi dan satu handshake pending diperbolehkan. `HELLO` yang berhasil akan
-menutup klien lama; handshake yang gagal tidak mengganggu klien lama. Baris dibatasi 1024 byte,
-perintah tidak dikenal dijawab `ERR cmd`, dan SET memakai validasi ketat yang sama dengan batas
-config. Penulisan config digabung dan dibatasi satu write per 500 ms; jangan menjalankan `SET` dari
-aplikasi bersamaan dengan `ctl.sh save` dari WebUI.
+Satu klien terautentikasi dan satu handshake pending diperbolehkan. Koneksi pending yang baru selalu
+menutup koneksi pending lama, tetapi tidak pernah mengganggu klien terautentikasi; hanya `HELLO`
+yang berhasil yang dapat menggantikan klien lama. Handshake yang gagal tidak mengganggu klien lama.
+Baris dibatasi 1024 byte, perintah tidak dikenal dijawab `ERR cmd`, dan SET memakai validasi ketat
+yang sama dengan batas config. Penulisan config digabung dan dibatasi satu write per 500 ms; jangan
+menjalankan `SET` dari aplikasi bersamaan dengan `ctl.sh save` dari WebUI.
 
 Selama `--listen` aktif, `notify.sh` tidak dipanggil karena notifikasi menjadi tanggung jawab
 aplikasi. `hw.sh` tetap mengikuti pengaturan `hw`. Spesifikasi lengkap, termasuk persistence dan

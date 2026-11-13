@@ -46,9 +46,12 @@ runs. This is intentional and observable.
 
 ## D-005: One authenticated client plus one pending handshake
 
+Superseded by D-013: the authenticated/pending split remains, but a new pending connection now
+replaces the old pending connection instead of being closed when a third connection arrives.
+
 Chosen: a new connection is accepted as pending while the current authenticated client keeps
 working. Only a successful HELLO closes and replaces the old client. A failed handshake leaves the
-old client untouched. A third connection is closed immediately.
+old client untouched. The original third-connection close rule is no longer used.
 
 Reason: this satisfies "a new client that authenticates replaces the old" without letting an
 unauthenticated connection evict a working app.
@@ -127,3 +130,14 @@ before the host's missing touchscreen can return `2`. Moving these checks would 
 wins, so the order is documented instead of rearranged. A client that sees `11` can retry another
 port safely; a client that sees `2` or `3` must not keep retrying a port, because the listener was
 already created and then closed.
+
+## D-013: A new pending connection replaces the old pending connection
+
+Chosen: every accepted connection closes the previous pending handshake before taking its place.
+This includes a failed handshake that is still inside its 300 ms `ERR auth` linger. The
+authenticated client is never touched by this replacement; only a successful `HELLO` can replace it.
+
+Reason: a local application that opens one connection and never authenticates must not be able to
+sit on the only pending slot and delay the real app's reconnect. Replacing the stale pending socket
+is bounded work in the existing accept loop and does not add a thread or a queue. A pending socket
+cannot hold a lease because `HOLD` is accepted only after authentication.

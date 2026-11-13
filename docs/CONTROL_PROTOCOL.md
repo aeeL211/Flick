@@ -101,12 +101,15 @@ its own notifications. `hw.sh` remains active and is called by the existing `hwS
 
 The server keeps at most one authenticated client and one client that is still authenticating.
 
+- A new accepted connection always closes and replaces the previous pending handshake, including one
+  that is still in its 300 ms failure linger. There is no "third connection is closed" rule.
+- Replacing the pending slot never closes, replaces, or pauses the authenticated client. Only a
+  successful `HELLO` can replace the authenticated client.
 - A connection that completes `HELLO` replaces and closes the current authenticated client.
-- A failed or timed-out handshake never replaces the authenticated client.
-- If both a pending handshake and an authenticated client already exist, a further connection is
-  accepted and closed immediately. A failed handshake that is still in its 300 ms linger may be
-  replaced by a new pending connection.
-- Replacing a client clears its subscription. The new client starts unsubscribed.
+- A failed or timed-out handshake never replaces the authenticated client. It stays pending until
+  its linger ends or a newer pending connection replaces it.
+- Replacing an authenticated client clears its subscription and its hold. The new client starts
+  unsubscribed and without a hold. A hold is not transferred between connections.
 
 ## 3. Command grammar
 
