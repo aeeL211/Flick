@@ -372,3 +372,25 @@ The zip layout and deterministic packaging are unchanged. No tag is created by t
   selftest and compatibility contract. SET uses a strict mode of the same parser and the same
   range constants.
 - Notifications from the daemon in app mode: the app owns its notification.
+
+## 8. Operational notes
+
+### 8.1 Already-running detection and the binary name
+
+The existing `running()` check reads the pid from `--pidfile`, requires `kill(pid, 0)` to succeed,
+and then reads `/proc/<pid>/comm`. It recognizes the process only when the first five bytes of
+`comm` are exactly `flick`. It does not read `/proc/<pid>/cmdline`, compare a full path, or compare
+the executable inode. This behavior is unchanged by the control-server work.
+
+Consequences:
+
+- The binary file that is executed must have a name beginning with `flick`, such as `flick`,
+  `flick.arm64`, `flick-arm64`, or `flickd`. A renamed binary such as `touchd` or `myflick` is not
+  recognized, even if it is the same executable. Starting a second copy can then proceed and both
+  copies may fight over the touchscreen.
+- `/proc/<pid>/comm` is the kernel task name, usually the executable's file name truncated to 15
+  bytes. The five-byte prefix check still matches a long name such as `flick-arm64`.
+- A stale pid file whose PID was reused by an unrelated process does not block startup. If that PID
+  was reused by another process whose `comm` starts with `flick`, startup is refused.
+- Keep the installed binary name stable and matching the name used by `ctl.sh`; do not rename it
+  only on one side of the pid-file check.

@@ -224,6 +224,9 @@ konfigurasi, dan WebUI merupakan bagian dari proyek ini.
   `setprop` bisa ditolak di shell mode. Fitur ini opsional dan nilai sebelumnya dikembalikan saat
   Flick berhenti.
 - Binary disejajarkan untuk page size 16 KB (Android 15+), minimum API 24.
+- Deteksi "sudah berjalan" membaca `/proc/<pid>/comm` dan menerima proses hanya bila lima byte
+  pertamanya `flick`. Jangan mengganti nama file binary yang dijalankan menjadi nama lain tanpa
+  awalan `flick`, karena pid file lama tidak akan dikenali dan dua daemon bisa berjalan bersamaan.
 - WebUI memakai `moduleInfo().moduleDir` dari AxManager. Jalur shell mode
   `/data/user_de/0/com.android.shell/axeron/plugins/flick` hanya cadangan bila host tidak
   menyediakan `moduleDir`.
