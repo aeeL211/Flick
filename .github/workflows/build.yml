@@ -183,7 +183,7 @@ jobs:
             "$READELF" -lW "$f" | grep 'GNU_RELRO' >/dev/null || { echo "::error::$f is not RELRO"; exit 1; }
             "$READELF" -lW "$f" | grep 'GNU_STACK' >/dev/null || { echo "::error::$f has no GNU_STACK"; exit 1; }
             ! "$READELF" -lW "$f" | grep 'GNU_STACK.*RWE' >/dev/null || { echo "::error::$f has an executable stack"; exit 1; }
-            ALIGN=$("$READELF" -lW "$f" | awk '$1 == "LOAD" { print $NF; exit }')
+            ALIGN=$("$READELF" -lW "$f" | awk '$1 == "LOAD" && !a { a=$NF } END { print a }')
             [ -n "$ALIGN" ] || { echo "::error::$f has no LOAD segment"; exit 1; }
             [ $((ALIGN)) -ge 16384 ] || { echo "::error::$f LOAD alignment $ALIGN < 16 KB"; exit 1; }
 
