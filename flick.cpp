@@ -27,7 +27,9 @@
 #include <fcntl.h>
 #include <linux/input.h>
 #include <linux/uinput.h>
+#include <arpa/inet.h>
 #include <math.h>
+#include <netinet/in.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -38,6 +40,7 @@
 #include <sys/inotify.h>
 #include <sys/ioctl.h>
 #include <sys/resource.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -50,6 +53,11 @@
 #define FLICK_PROC_ROOT "/proc"
 #endif
 
+// The release workflow passes the module version here. Host tests and development builds use dev.
+#ifndef FLICK_VERSION
+#define FLICK_VERSION "dev"
+#endif
+
 constexpr int maxSlot = 32;
 constexpr int maxPid = 8192;
 constexpr int tickMs = 3000;
@@ -58,6 +66,16 @@ constexpr int pkgBuf = 1024;
 constexpr int maxPkgs = 16;
 constexpr int pkgLen = 128;
 constexpr int batchSize = 256;
+constexpr int ctlLineMax = 1024;
+constexpr int ctlKeyMax = 31;
+constexpr int ctlValueMax = 1000;
+constexpr int ctlTokenMin = 32;
+constexpr int ctlTokenMax = 256;
+constexpr int ctlOutMax = 4096;
+constexpr int ctlChunk = 512;
+constexpr int64_t ctlAuthMs = 2000;
+constexpr int64_t ctlLingerMs = 300;
+constexpr int64_t ctlPersistMs = 500;
 constexpr char defPkgs[] = "com.dts.freefireth,com.dts.freefiremax";
 constexpr float curveRef = 0.04f;
 constexpr float accelMax = 1.8f;
@@ -71,6 +89,7 @@ static void onSignal(int) { gStop = 1; }
 
 static char gDir[256] = ".";
 static constexpr const char *gProcRoot = FLICK_PROC_ROOT;
+static const char *gCfgPath = "config";
 
 // origin of the calculation. the frame factor (the blend of sens_h and sens_v by the direction of the
 // finger, the speed curve) and the filter parameters follow the Magic Touch feature of the Game
@@ -313,6 +332,10 @@ static void say(int fd, const char *fmt, ...) {
 // changes. the flag next to it is the applied value as last reported in that file.
 static char gState[64];
 static bool gOn = false;
+static bool gCtlEnabled = false;
+static bool gPaused = false;
+static unsigned long long gStatGrabs = 0, gStatReleases = 0, gStatSynDropped = 0;
+static void ctlPublishState();
 
 static void setState(const char *s) {
   if (!strcmp(s, gState)) return;
@@ -321,6 +344,7 @@ static void setState(const char *s) {
   snprintf(p, sizeof p, "%s/flick.state", gDir);
   int fd = open(p, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
   if (fd >= 0) { (void)!write(fd, s, strlen(s)); close(fd); }
+  ctlPublishState();
 }
 
 // foreground detection uses no dumpsys. proc is fully visible to the shell user through the readproc
@@ -337,9 +361,7 @@ static int gPidBuf[3][maxPid];
 static int *gPrev = gPidBuf[0], *gSnap = gPidBuf[1], *gCur = gPidBuf[2];
 static int gPrevCount = 0;
 static bool gProcStale = false;  // a foreground period skipped scans, so the pid cache may be old
-#ifdef FLICK_PROC_TEST
-static unsigned gProcScans = 0;
-#endif
+static unsigned long long gProcScans = 0;
 
 static bool pkgChar(char ch) {
   return (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_' ||
@@ -434,9 +456,7 @@ static int checkPid(int pid) {
 
 // looks at pids that appeared since the last tick and keeps oom_score_adj open for listed apps
 static void scanProc() {
-#ifdef FLICK_PROC_TEST
   gProcScans++;
-#endif
   int n = readPids(gCur, maxPid);
   if (n < 0) return;
   gAdjErr = 0;
@@ -793,6 +813,20 @@ static int touching(int fd) {
   return 0;
 }
 
+// grab and release are wrapped so the control protocol can report how often the panel changed
+// hands without touching the actual safety logic.
+static int grabPanel(int fd) {
+  int r = ioctl(fd, EVIOCGRAB, 1);
+  if (r == 0) gStatGrabs++;
+  return r;
+}
+
+static int releasePanel(int fd) {
+  int r = ioctl(fd, EVIOCGRAB, 0);
+  if (r == 0) gStatReleases++;
+  return r;
+}
+
 // returns 0 when grabbed, 1 when a finger is down so retry soon, -1 on error with the reason in the
 // state file
 static int activate() {
@@ -805,7 +839,7 @@ static int activate() {
     close(fd);
     return t;
   }
-  if (ioctl(fd, EVIOCGRAB, 1) < 0) {
+  if (grabPanel(fd) < 0) {
     snprintf(e, sizeof e, "error:grab errno=%d", errno);
     setState(e);
     close(fd);
@@ -815,7 +849,7 @@ static int activate() {
   // landed in the window, so the daemon never holds the panel while a touch is down.
   t = touching(fd);
   if (t != 0) {
-    ioctl(fd, EVIOCGRAB, 0);
+    releasePanel(fd);
     if (t < 0) { snprintf(e, sizeof e, "error:touch errno=%d", errno); setState(e); }
     close(fd);
     return t;
@@ -830,7 +864,7 @@ static int activate() {
 }
 
 static void deactivate() {
-  ioctl(gSource, EVIOCGRAB, 0);
+  releasePanel(gSource);
   close(gSource);
   gSource = -1;
 }
@@ -873,6 +907,7 @@ static int pump(const Config &c) {
     if (gBatch[i].type == EV_SYN && gBatch[i].code == SYN_DROPPED) { ok = i; break; }
     handleEvent(gBatch, i, c);
   }
+  if (ok != cnt) gStatSynDropped++;
   if (ok == cnt) { if (gDirty) closeFrame(gBatch, timeMs(gBatch[cnt - 1]), c); }
   else dropFrame();
   if (ok && !writeAll(gUinput, gBatch, (size_t)ok * sizeof(input_event))) return -1;
@@ -919,7 +954,8 @@ static void onChange(bool on, const Config &c) {
   if (on == gOn) return;
   gOn = on;
   hwSync(c);
-  runHook("notify.sh", on ? "active" : "idle");
+  // in app mode the application posts its own notification, the daemon must not add a second one
+  if (!gCtlEnabled) runHook("notify.sh", on ? "active" : "idle");
 }
 
 static int64_t nowMs() {
@@ -993,29 +1029,631 @@ static bool cfgChanged(int ifd, const char *base) {
   return hit;
 }
 
+// -------------------------------------------------------------------------------------------------
+// optional control server. it lives in the same poll loop and only runs when --listen was given.
+// all buffers are fixed, every socket is non-blocking, and no client input ever reaches a shell or
+// a filesystem path.
+
+enum {
+  cfgBitSensH = 1u << 0,
+  cfgBitSensV = 1u << 1,
+  cfgBitZone = 1u << 2,
+  cfgBitOrient = 1u << 3,
+  cfgBitSmooth = 1u << 4,
+  cfgBitStrength = 1u << 5,
+  cfgBitResp = 1u << 6,
+  cfgBitCurve = 1u << 7,
+  cfgBitHw = 1u << 8,
+  cfgBitFilter = 1u << 9,
+  cfgBitPkgs = 1u << 10
+};
+
+struct CtlConn {
+  int fd = -1;
+  bool authed = false;
+  bool failed = false;
+  bool subscribed = false;
+  bool stopWhenDrained = false;
+  bool peerClosed = false;
+  int64_t acceptedMs = 0;
+  int64_t closeAtMs = 0;
+  size_t inLen = 0;
+  size_t outLen = 0;
+  char in[ctlLineMax + 1] = {};
+  char out[ctlOutMax] = {};
+};
+
+static int gCtlListen = -1;
+static unsigned gCtlPort = 0;
+static char gCtlToken[ctlTokenMax + 1];
+static size_t gCtlTokenLen = 0;
+static CtlConn gCtlPending, gCtlClient;
+static Config *gCfg = nullptr;
+static int64_t gCtlStartMs = 0;
+static bool gTickNow = false;
+static int64_t gCtlLastPersistMs = -ctlPersistMs;
+static int64_t gCtlPersistDueMs = 0;
+static unsigned gCtlPendingMask = 0;
+static char gCtlEvtState[16];
+static int gCtlEvtPaused = -1;
+
+// the compiler must not turn this into a dead store
+static void wipeMem(void *p, size_t n) {
+  volatile unsigned char *q = (volatile unsigned char *)p;
+  while (n--) *q++ = 0;
+}
+
+// reads the token once, wipes the original environment value, and removes the variable before any
+// hook can be forked. a malformed token is also scrubbed.
+static bool ctlLoadToken() {
+  gCtlTokenLen = 0;
+  char *e = getenv("FLICK_TOKEN");
+  if (!e) return false;
+  size_t n = strlen(e);
+  bool ok = n >= ctlTokenMin && n <= ctlTokenMax;
+  for (size_t i = 0; ok && i < n; i++) {
+    unsigned char ch = (unsigned char)e[i];
+    if (ch < 0x21 || ch > 0x7e) ok = false;
+  }
+  if (ok) {
+    memcpy(gCtlToken, e, n);
+    gCtlToken[n] = 0;
+    gCtlTokenLen = n;
+  }
+  wipeMem(e, n);
+  unsetenv("FLICK_TOKEN");
+  if (!ok) wipeMem(gCtlToken, sizeof gCtlToken);
+  return ok;
+}
+
+// compares the candidate and the stored token without an early exit on content or length
+static bool tokenEqual(const char *s, size_t n) {
+  unsigned diff = (unsigned)(n ^ gCtlTokenLen);
+  for (size_t i = 0; i < (size_t)ctlTokenMax; i++) {
+    unsigned char a = i < n ? (unsigned char)s[i] : 0;
+    unsigned char b = i < gCtlTokenLen ? (unsigned char)gCtlToken[i] : 0;
+    diff |= (unsigned)(a ^ b);
+  }
+  return diff == 0;
+}
+
+static void ctlFdSetup(int fd) {
+  int fl = fcntl(fd, F_GETFL, 0);
+  if (fl >= 0) (void)fcntl(fd, F_SETFL, fl | O_NONBLOCK);
+  int fdf = fcntl(fd, F_GETFD, 0);
+  if (fdf >= 0) (void)fcntl(fd, F_SETFD, fdf | FD_CLOEXEC);
+}
+
+static void ctlClose(CtlConn &c) {
+  if (c.fd >= 0) close(c.fd);
+  wipeMem(c.in, sizeof c.in);
+  wipeMem(c.out, sizeof c.out);
+  c.fd = -1;
+  c.authed = false;
+  c.failed = false;
+  c.subscribed = false;
+  c.stopWhenDrained = false;
+  c.peerClosed = false;
+  c.acceptedMs = 0;
+  c.closeAtMs = 0;
+  c.inLen = 0;
+  c.outLen = 0;
+}
+
+static bool ctlQueue(CtlConn &c, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+static bool ctlQueue(CtlConn &c, const char *fmt, ...) {
+  if (c.fd < 0 || c.outLen >= sizeof c.out) return false;
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vsnprintf(c.out + c.outLen, sizeof c.out - c.outLen, fmt, ap);
+  va_end(ap);
+  if (n < 0 || (size_t)n >= sizeof c.out - c.outLen) return false;
+  c.outLen += (size_t)n;
+  return true;
+}
+
+static void ctlReply(CtlConn &c, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
+static void ctlReply(CtlConn &c, const char *fmt, ...) {
+  if (c.fd < 0 || c.outLen >= sizeof c.out) { ctlClose(c); return; }
+  va_list ap;
+  va_start(ap, fmt);
+  int n = vsnprintf(c.out + c.outLen, sizeof c.out - c.outLen, fmt, ap);
+  va_end(ap);
+  if (n < 0 || (size_t)n >= sizeof c.out - c.outLen) { ctlClose(c); return; }
+  c.outLen += (size_t)n;
+}
+
+// returns false only when the connection is broken, EAGAIN keeps the rest queued
+static bool ctlFlush(CtlConn &c) {
+  if (c.fd < 0) return false;
+  size_t off = 0;
+  while (off < c.outLen) {
+    ssize_t w = write(c.fd, c.out + off, c.outLen - off);
+    if (w > 0) { off += (size_t)w; continue; }
+    if (w < 0 && errno == EINTR) continue;
+    if (w < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+    return false;
+  }
+  if (off) {
+    memmove(c.out, c.out + off, c.outLen - off);
+    c.outLen -= off;
+  }
+  return true;
+}
+
+static const char *ctlStateName() {
+  if (gSource >= 0) return "active";
+  if (gPaused || !strncmp(gState, "error:", 6)) return "off";
+  return "idle";
+}
+
+static void ctlPublishState() {
+  const char *s = ctlStateName();
+  int p = gPaused ? 1 : 0;
+  if (!strcmp(s, gCtlEvtState) && p == gCtlEvtPaused) return;
+  snprintf(gCtlEvtState, sizeof gCtlEvtState, "%s", s);
+  gCtlEvtPaused = p;
+  if (gCtlClient.fd >= 0 && gCtlClient.authed && gCtlClient.subscribed)
+    if (!ctlQueue(gCtlClient, "EVT state=%s paused=%d\n", s, p)) ctlClose(gCtlClient);
+}
+
+static unsigned ctlMaskKey(const char *k) {
+  if (!strcmp(k, "sens_h")) return cfgBitSensH;
+  if (!strcmp(k, "sens_v")) return cfgBitSensV;
+  if (!strcmp(k, "zone")) return cfgBitZone;
+  if (!strcmp(k, "orient")) return cfgBitOrient;
+  if (!strcmp(k, "smooth")) return cfgBitSmooth;
+  if (!strcmp(k, "strength")) return cfgBitStrength;
+  if (!strcmp(k, "resp")) return cfgBitResp;
+  if (!strcmp(k, "curve")) return cfgBitCurve;
+  if (!strcmp(k, "hw")) return cfgBitHw;
+  if (!strcmp(k, "filter")) return cfgBitFilter;
+  if (!strcmp(k, "pkgs")) return cfgBitPkgs;
+  return 0;
+}
+
+// shortest fixed decimal that reads back as the same float, always with a decimal point
+static void fmtFloat(char *b, size_t n, float f) {
+  for (int p = 1; p <= 9; p++) {
+    snprintf(b, n, "%.*f", p, (double)f);
+    if (strtof(b, nullptr) == f) return;
+  }
+}
+
+static bool fmtCfg(char *b, size_t n, unsigned bit, const Config &c) {
+  char f[32];
+  int r;
+  switch (bit) {
+    case cfgBitSensH: fmtFloat(f, sizeof f, c.sensH); r = snprintf(b, n, "sens_h=%s\n", f); break;
+    case cfgBitSensV: fmtFloat(f, sizeof f, c.sensV); r = snprintf(b, n, "sens_v=%s\n", f); break;
+    case cfgBitZone: r = snprintf(b, n, "zone=%d\n", c.zone); break;
+    case cfgBitOrient: r = snprintf(b, n, "orient=%d\n", c.orient); break;
+    case cfgBitSmooth: r = snprintf(b, n, "smooth=%d\n", c.smooth); break;
+    case cfgBitStrength: r = snprintf(b, n, "strength=%d\n", c.strength); break;
+    case cfgBitResp: r = snprintf(b, n, "resp=%d\n", c.resp); break;
+    case cfgBitCurve: r = snprintf(b, n, "curve=%d\n", c.curve); break;
+    case cfgBitHw: r = snprintf(b, n, "hw=%d\n", c.hw); break;
+    case cfgBitFilter: r = snprintf(b, n, "filter=%d\n", c.filter); break;
+    case cfgBitPkgs: r = snprintf(b, n, "pkgs=%s\n", c.pkgs); break;
+    default: return false;
+  }
+  return r > 0 && (size_t)r < n;
+}
+
+// merges the pending keys into the existing file. unknown lines survive; a changed key appears
+// exactly once. the temporary file is unique per pid and the rename is atomic.
+static bool ctlWriteConfig() {
+  if (!gCfg || !gCtlPendingMask) return true;
+  char tmp[320];
+  int tn = snprintf(tmp, sizeof tmp, "%s.flick.%d.tmp", gCfgPath, (int)getpid());
+  if (tn < 0 || (size_t)tn >= sizeof tmp) return false;
+  FILE *in = fopen(gCfgPath, "r");
+  FILE *out = fopen(tmp, "w");
+  if (!out) { if (in) fclose(in); return false; }
+  bool ok = true;
+  unsigned written = 0;
+  char line[ctlLineMax + 2], cfgLine[ctlLineMax + 64];
+  bool skip = false;
+  while (in && fgets(line, sizeof line, in)) {
+    size_t len = strlen(line);
+    bool hasNl = len > 0 && line[len - 1] == '\n';
+    if (skip) { if (hasNl) skip = false; continue; }
+    if (!hasNl && len == sizeof line - 1) { skip = true; continue; }
+    char *eq = strchr(line, '=');
+    unsigned bit = 0;
+    if (eq) {
+      *eq = 0;
+      bit = ctlMaskKey(line);
+      *eq = '=';
+    }
+    if (bit && (gCtlPendingMask & bit)) {
+      if (!(written & bit)) {
+        if (!fmtCfg(cfgLine, sizeof cfgLine, bit, *gCfg)) { ok = false; break; }
+        if (fputs(cfgLine, out) < 0) { ok = false; break; }
+        written |= bit;
+      }
+      continue;
+    }
+    if (fputs(line, out) < 0) { ok = false; break; }
+    if (len && line[len - 1] != '\n' && fputc('\n', out) < 0) { ok = false; break; }
+  }
+  for (unsigned bit = 1; ok && bit <= cfgBitPkgs; bit <<= 1)
+    if ((gCtlPendingMask & bit) && !(written & bit)) {
+      if (!fmtCfg(cfgLine, sizeof cfgLine, bit, *gCfg)) { ok = false; break; }
+      if (fputs(cfgLine, out) < 0) { ok = false; break; }
+    }
+  if (in) fclose(in);
+  if (ok && (ferror(out) || fflush(out) != 0)) ok = false;
+  if (fclose(out) != 0) ok = false;
+  if (!ok) { unlink(tmp); return false; }
+  if (rename(tmp, gCfgPath) < 0) { unlink(tmp); return false; }
+  return true;
+}
+
+static void ctlFlushConfig(int64_t now) {
+  if (!gCtlPersistDueMs || now < gCtlPersistDueMs) return;
+  if (ctlWriteConfig()) {
+    gCtlPendingMask = 0;
+    gCtlPersistDueMs = 0;
+    gCtlLastPersistMs = now;
+  } else {
+    gCtlPersistDueMs = now + ctlPersistMs;
+  }
+}
+
+static void ctlFlushConfigNow() {
+  if (gCtlPendingMask) (void)ctlWriteConfig();
+  gCtlPendingMask = 0;
+  gCtlPersistDueMs = 0;
+}
+
+static void ctlSchedulePersist(unsigned mask, int64_t now) {
+  gCtlPendingMask |= mask;
+  if (gCtlPersistDueMs) return;
+  if (now - gCtlLastPersistMs >= ctlPersistMs) {
+    if (ctlWriteConfig()) {
+      gCtlPendingMask = 0;
+      gCtlLastPersistMs = now;
+    } else {
+      gCtlPersistDueMs = now + ctlPersistMs;
+    }
+  } else {
+    gCtlPersistDueMs = gCtlLastPersistMs + ctlPersistMs;
+  }
+}
+
+static int64_t ctlDeadline() {
+  int64_t d = -1;
+  if (gCtlPending.fd >= 0)
+    d = gCtlPending.failed ? gCtlPending.closeAtMs : gCtlPending.acceptedMs + ctlAuthMs;
+  if (gCtlPersistDueMs && (d < 0 || gCtlPersistDueMs < d)) d = gCtlPersistDueMs;
+  return d;
+}
+
+static void ctlFailAuth(CtlConn &c, int64_t now) {
+  if (c.failed) return;
+  c.failed = true;
+  wipeMem(c.in, sizeof c.in);
+  c.inLen = 0;
+  c.closeAtMs = now + ctlLingerMs;
+  ctlReply(c, "ERR auth\n");
+}
+
+static bool ctlAccept(int64_t now) {
+  bool fresh = false;
+  if (gCtlListen < 0) return fresh;
+  for (;;) {
+    sockaddr_in sa;
+    socklen_t sl = sizeof sa;
+    int fd = accept(gCtlListen, reinterpret_cast<sockaddr *>(static_cast<void *>(&sa)), &sl);
+    if (fd < 0) { if (errno == EINTR) continue; return fresh; }
+    if (gCtlPending.fd >= 0 && !gCtlPending.failed) { close(fd); continue; }
+    if (gCtlPending.fd >= 0) ctlClose(gCtlPending);
+    ctlFdSetup(fd);
+    gCtlPending = CtlConn();
+    gCtlPending.fd = fd;
+    gCtlPending.acceptedMs = now;
+    fresh = true;
+  }
+}
+
+// a new handshake replaces the old client only after the token is accepted
+static bool ctlPromote(CtlConn &src) {
+  if (gCtlClient.fd >= 0) ctlClose(gCtlClient);
+  gCtlClient = src;
+  gCtlClient.authed = true;
+  gCtlClient.failed = false;
+  gCtlClient.closeAtMs = 0;
+  gCtlClient.stopWhenDrained = false;
+  gCtlClient.subscribed = false;
+  gCtlPending = CtlConn();
+  if (!ctlQueue(gCtlClient, "OK flick=%s proto=1\n", FLICK_VERSION)) {
+    ctlClose(gCtlClient);
+    return false;
+  }
+  return true;
+}
+
+static void ctlCmdSet(CtlConn &c, char *args, int64_t now) {
+  if (!gCfg) { ctlReply(c, "ERR cmd\n"); return; }
+  Config next = *gCfg;
+  unsigned mask = 0;
+  bool any = false;
+  char *p = args;
+  while (*p) {
+    while (*p == ' ') p++;
+    if (!*p) break;
+    char *tok = p;
+    while (*p && *p != ' ') p++;
+    if (*p) *p++ = 0;
+    char *eq = strchr(tok, '=');
+    if (!eq || eq == tok) { ctlReply(c, "ERR cmd\n"); return; }
+    *eq = 0;
+    const char *k = tok;
+    const char *v = eq + 1;
+    size_t kl = strlen(k), vl = strlen(v);
+    if (kl > ctlKeyMax) { ctlReply(c, "ERR cmd\n"); return; }
+    if (vl > ctlValueMax) { ctlReply(c, "ERR %s length\n", k); return; }
+    const char *why = "invalid";
+    ApplyResult r = applySetting(k, v, next, true, &why);
+    if (r == applyUnknown) { ctlReply(c, "ERR %s unknown\n", k); return; }
+    if (r != applyOk) { ctlReply(c, "ERR %s %s\n", k, why); return; }
+    mask |= ctlMaskKey(k);
+    any = true;
+  }
+  if (!any) { ctlReply(c, "ERR cmd\n"); return; }
+  bool pkgsChanged = strcmp(next.pkgs, gCfg->pkgs) != 0;
+  deriveFilter(next);
+  *gCfg = next;
+  if (pkgsChanged) setPkgs(gCfg->pkgs);
+  hwSync(*gCfg);
+  gTickNow = true;
+  ctlSchedulePersist(mask, now);
+  ctlReply(c, "OK\n");
+}
+
+static void ctlCmdGet(CtlConn &c) {
+  if (!gCfg) { ctlReply(c, "ERR cmd\n"); return; }
+  char h[32], v[32];
+  fmtFloat(h, sizeof h, gCfg->sensH);
+  fmtFloat(v, sizeof v, gCfg->sensV);
+  ctlReply(c,
+           "CFG sens_h=%s sens_v=%s zone=%d orient=%d smooth=%d strength=%d resp=%d curve=%d hw=%d "
+           "filter=%d pkgs=%s\n",
+           h, v, gCfg->zone, gCfg->orient, gCfg->smooth, gCfg->strength, gCfg->resp, gCfg->curve,
+           gCfg->hw, gCfg->filter, gCfg->pkgs);
+}
+
+// returns true when a successful HELLO moved this connection into the authenticated slot
+static bool ctlHandleLine(CtlConn &c, int64_t now) {
+  char *line = c.in;
+  if (!c.authed) {
+    if (!line[0]) {
+      ctlReply(c, "ERR cmd\n");
+      return false;
+    }
+    bool ok = !strncmp(line, "HELLO ", 6) && tokenEqual(line + 6, strlen(line + 6));
+    if (!ok) {
+      ctlFailAuth(c, now);
+      wipeMem(c.in, sizeof c.in);
+      return false;
+    }
+    wipeMem(c.in, sizeof c.in);
+    c.inLen = 0;
+    return ctlPromote(c);
+  }
+  if (!strcmp(line, "PING")) ctlReply(c, "PONG\n");
+  else if (!strcmp(line, "GET")) ctlCmdGet(c);
+  else if (!strncmp(line, "SET ", 4)) ctlCmdSet(c, line + 4, now);
+  else if (!strcmp(line, "STATUS")) {
+    int64_t up = (now - gCtlStartMs) / 1000;
+    if (up < 0) up = 0;
+    ctlReply(c, "ST state=%s paused=%d up=%lld pid=%d\n", ctlStateName(), gPaused ? 1 : 0,
+             (long long)up, (int)getpid());
+  } else if (!strcmp(line, "PAUSE")) {
+    gPaused = true;
+    gTickNow = true;
+    ctlReply(c, "OK\n");
+    ctlPublishState();
+  } else if (!strcmp(line, "RESUME")) {
+    gPaused = false;
+    gTickNow = true;
+    ctlReply(c, "OK\n");
+    ctlPublishState();
+  } else if (!strcmp(line, "SUB")) {
+    c.subscribed = true;
+    ctlReply(c, "OK\n");
+  } else if (!strcmp(line, "UNSUB")) {
+    c.subscribed = false;
+    ctlReply(c, "OK\n");
+  } else if (!strcmp(line, "STATS")) {
+    ctlReply(c, "STATS grabs=%llu releases=%llu syn_dropped=%llu scans=%llu\n", gStatGrabs,
+             gStatReleases, gStatSynDropped, gProcScans);
+  } else if (!strcmp(line, "STOP")) {
+    ctlReply(c, "OK\n");
+    c.stopWhenDrained = true;
+    c.subscribed = false;
+  } else {
+    ctlReply(c, "ERR cmd\n");
+  }
+  return false;
+}
+
+static void ctlRead(CtlConn &c, int64_t now) {
+  if (c.fd < 0 || c.failed || c.stopWhenDrained) return;
+  char buf[ctlChunk];
+  CtlConn *cur = &c;
+  for (;;) {
+    ssize_t n = read(cur->fd, buf, sizeof buf);
+    if (n < 0) {
+      if (errno == EINTR) continue;
+      if (errno == EAGAIN || errno == EWOULDBLOCK) return;
+      ctlClose(*cur);
+      return;
+    }
+    if (n == 0) {
+      cur->peerClosed = true;
+      return;
+    }
+    for (ssize_t i = 0; i < n; i++) {
+      char ch = buf[i];
+      if (ch == '\n') {
+        if (cur->inLen && cur->in[cur->inLen - 1] == '\r') cur->inLen--;
+        cur->in[cur->inLen] = 0;
+        if (memchr(cur->in, 0, cur->inLen)) { wipeMem(buf, (size_t)n); ctlClose(*cur); return; }
+        bool promoted = ctlHandleLine(*cur, now);
+        if (promoted) cur = &gCtlClient;
+        cur->inLen = 0;
+        if (cur->fd < 0 || cur->failed || cur->stopWhenDrained) { wipeMem(buf, (size_t)n); return; }
+      } else {
+        if (cur->inLen >= (size_t)ctlLineMax) { wipeMem(buf, (size_t)n); ctlClose(*cur); return; }
+        cur->in[cur->inLen++] = ch;
+      }
+    }
+    wipeMem(buf, (size_t)n);
+  }
+}
+
+static void ctlConnService(CtlConn &c, short ev, int64_t now) {
+  if (c.fd < 0) return;
+  if (!ctlFlush(c) || (ev & (POLLERR | POLLNVAL))) { ctlClose(c); return; }
+  if (ev & (POLLIN | POLLHUP)) ctlRead(c, now);
+  if (c.fd < 0) return;
+  if (!ctlFlush(c)) { ctlClose(c); return; }
+  if ((c.peerClosed && c.outLen == 0) || (c.stopWhenDrained && c.outLen == 0)) ctlClose(c);
+}
+
+// called after poll with the readiness of the three control descriptors
+static void ctlService(int64_t now, short listenEv, short pendingEv, short clientEv) {
+  ctlFlushConfig(now);
+  int pendingFd = gCtlPending.fd;
+  int clientFd = gCtlClient.fd;
+  bool fresh = false;
+  if (gCtlListen >= 0 && (listenEv & POLLIN)) fresh = ctlAccept(now);
+  if (gCtlPending.fd >= 0) {
+    if (!gCtlPending.authed && !gCtlPending.failed &&
+        now - gCtlPending.acceptedMs >= ctlAuthMs)
+      ctlFailAuth(gCtlPending, now);
+    ctlConnService(gCtlPending, !fresh && pendingFd == gCtlPending.fd ? pendingEv : 0, now);
+    if (gCtlPending.fd >= 0 && gCtlPending.failed && now >= gCtlPending.closeAtMs)
+      ctlClose(gCtlPending);
+  }
+  if (gCtlClient.fd >= 0) {
+    bool stopAfter = gCtlClient.stopWhenDrained;
+    ctlConnService(gCtlClient, clientFd == gCtlClient.fd ? clientEv : 0, now);
+    if (gCtlClient.fd < 0) {
+      if (stopAfter) gStop = 1;
+    } else if (gCtlClient.stopWhenDrained && gCtlClient.outLen == 0) {
+      ctlClose(gCtlClient);
+      gStop = 1;
+    }
+  }
+}
+
+// binds only the loopback address. port 0 is accepted for the host test, which learns the real
+// port from getsockname.
+static int ctlStart(unsigned port) {
+  if (gCtlTokenLen < ctlTokenMin) { errno = EACCES; return -1; }
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) return -1;
+  int one = 1;
+  if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &one, sizeof one) < 0) {
+    int e = errno;
+    close(fd);
+    errno = e;
+    return -1;
+  }
+  sockaddr_in sa;
+  memset(&sa, 0, sizeof sa);
+  sa.sin_family = AF_INET;
+  sa.sin_port = htons((uint16_t)port);
+  if (inet_pton(AF_INET, "127.0.0.1", &sa.sin_addr) != 1) {
+    close(fd);
+    errno = EINVAL;
+    return -1;
+  }
+  if (bind(fd, reinterpret_cast<sockaddr *>(static_cast<void *>(&sa)), sizeof sa) < 0) {
+    int e = errno;
+    close(fd);
+    errno = e;
+    return -1;
+  }
+  if (listen(fd, 4) < 0) {
+    int e = errno;
+    close(fd);
+    errno = e;
+    return -1;
+  }
+  ctlFdSetup(fd);
+  socklen_t sl = sizeof sa;
+  if (getsockname(fd, reinterpret_cast<sockaddr *>(static_cast<void *>(&sa)), &sl) < 0) {
+    int e = errno;
+    close(fd);
+    errno = e;
+    return -1;
+  }
+  gCtlPort = ntohs(sa.sin_port);
+  if (!gCtlPort) {
+    close(fd);
+    errno = EADDRNOTAVAIL;
+    return -1;
+  }
+  gCtlListen = fd;
+  if (!gCtlStartMs) gCtlStartMs = nowMs();
+  return 0;
+}
+
+static void ctlShutdown() {
+  ctlClose(gCtlPending);
+  ctlClose(gCtlClient);
+  if (gCtlListen >= 0) { close(gCtlListen); gCtlListen = -1; }
+  wipeMem(gCtlToken, sizeof gCtlToken);
+  gCtlTokenLen = 0;
+}
+
 int main(int argc, char **argv) {
   const char *cfgPath = "config", *pidPath = "flick.pid", *dev = nullptr;
+  long listenPort = -1;
   bool detach = false;
   for (int i = 1; i < argc; i++) {
     if (!strcmp(argv[i], "--daemon")) detach = true;
     else if (!strcmp(argv[i], "--config") && i + 1 < argc) cfgPath = argv[++i];
     else if (!strcmp(argv[i], "--pidfile") && i + 1 < argc) pidPath = argv[++i];
     else if (!strcmp(argv[i], "--dev") && i + 1 < argc) dev = argv[++i];
+    else if (!strcmp(argv[i], "--listen")) {
+      if (i + 1 >= argc) { say(2, "ERR listen port\n"); return 2; }
+      char *end = nullptr;
+      long p = strtol(argv[++i], &end, 10);
+      if (end == argv[i] || *end || p < 1 || p > 65535) { say(2, "ERR listen port\n"); return 2; }
+      listenPort = p;
+    }
   }
   if (running(pidPath)) { say(2, "ERR already running\n"); return 1; }
+
+  if (listenPort >= 0) {
+    gCtlEnabled = true;
+    if (!ctlLoadToken()) { say(2, "ERR FLICK_TOKEN invalid\n"); return 2; }
+    if (ctlStart((unsigned)listenPort) < 0) {
+      say(2, "ERR listen errno=%d\n", errno);
+      ctlShutdown();
+      return 3;
+    }
+  }
 
   char base[128];
   splitPath(cfgPath, base, sizeof base);
   Config cfg;
   loadConfig(cfgPath, cfg);
+  gCfgPath = cfgPath;
+  gCfg = &cfg;
 
   int src;
   if (dev) { snprintf(gPath, sizeof gPath, "%s", dev); src = open(gPath, O_RDONLY | O_CLOEXEC); }
   else src = findTouch(gPath, sizeof gPath);
-  if (src < 0) { say(2, "ERR touchscreen not found errno=%d\n", errno); return 2; }
+  if (src < 0) { say(2, "ERR touchscreen not found errno=%d\n", errno); ctlShutdown(); return 2; }
   gUinput = cloneDev(src);
   close(src);
-  if (gUinput < 0) return 3;
+  if (gUinput < 0) { ctlShutdown(); return 3; }
   const input_absinfo &ax = gAbs[ABS_MT_POSITION_X], &ay = gAbs[ABS_MT_POSITION_Y];
   int64_t rx = (int64_t)ax.maximum - ax.minimum, ry = (int64_t)ay.maximum - ay.minimum;
   int64_t ref = rx < ry ? rx : ry;
@@ -1027,13 +1665,14 @@ int main(int argc, char **argv) {
   if (cfg.filter && procs < 20) {
     say(2, "ERR /proc not visible (pids=%d), set filter=0 to bypass\n", procs);
     ioctl(gUinput, UI_DEV_DESTROY);
+    ctlShutdown();
     return 6;
   }
   usleep(300000);
 
   if (detach) {
     int pp[2];
-    if (pipe2(pp, O_CLOEXEC) < 0) { say(2, "ERR pipe errno=%d\n", errno); return 5; }
+    if (pipe2(pp, O_CLOEXEC) < 0) { say(2, "ERR pipe errno=%d\n", errno); ctlShutdown(); return 5; }
     if (fork() > 0) {
       close(pp[1]);
       char b = 0;
@@ -1078,8 +1717,10 @@ int main(int argc, char **argv) {
 
   bool want = false;
   int64_t next = 0;
-  pollfd pf[2];
+  gCtlStartMs = nowMs();
+  pollfd pf[5];
   while (!gStop) {
+    if (gTickNow) { gTickNow = false; next = 0; }
     int64_t now = nowMs();
     if (now >= next) {
       next = now + tickMs;
@@ -1088,7 +1729,7 @@ int main(int argc, char **argv) {
         loadConfig(cfgPath, cfg);
         hwSync(cfg);
       }
-      want = !cfg.filter || inGame();
+      want = !gPaused && (!cfg.filter || inGame());
       if (gSource < 0) {
         if (!want) {
           if (gOn) onChange(false, cfg);
@@ -1108,11 +1749,28 @@ int main(int argc, char **argv) {
     }
 
     int64_t w = next - now;
-    pf[0].fd = gSource; pf[0].events = POLLIN; pf[0].revents = 0;
-    pf[1].fd = ifd;     pf[1].events = POLLIN; pf[1].revents = 0;
-    int r = poll(pf, 2, (int)(w < 0 ? 0 : (w > tickMs ? tickMs : w)));
+    if (w < 0) w = 0;
+    if (w > tickMs) w = tickMs;
+    int64_t deadline = ctlDeadline();
+    if (deadline >= 0) {
+      int64_t d = deadline - now;
+      if (d < 0) d = 0;
+      if (d < w) w = d;
+    }
+    pf[0].fd = gSource;         pf[0].events = POLLIN; pf[0].revents = 0;
+    pf[1].fd = ifd;             pf[1].events = POLLIN; pf[1].revents = 0;
+    pf[2].fd = gCtlListen;      pf[2].events = POLLIN; pf[2].revents = 0;
+    pf[3].fd = gCtlPending.fd;  pf[3].events = POLLIN; pf[3].revents = 0;
+    pf[4].fd = gCtlClient.fd;   pf[4].events = POLLIN; pf[4].revents = 0;
+    if (gCtlPending.outLen) pf[3].events |= POLLOUT;
+    if (gCtlClient.outLen) pf[4].events |= POLLOUT;
+    int r = poll(pf, 5, (int)w);
     if (r < 0) { if (errno == EINTR) continue; break; }
-    if (r == 0) continue;
+    if (r == 0) { ctlService(nowMs(), 0, 0, 0); continue; }
+
+    int64_t after = nowMs();
+    ctlService(after, pf[2].revents, pf[3].revents, pf[4].revents);
+    if (gStop) break;
 
     if ((pf[1].revents & POLLIN) && cfgChanged(ifd, base)) { loadConfig(cfgPath, cfg); hwSync(cfg); next = 0; }
     if (gSource >= 0) {
@@ -1124,6 +1782,8 @@ int main(int argc, char **argv) {
       if (pf[0].revents & ~POLLIN) break;
     }
   }
+  ctlFlushConfigNow();
+  ctlShutdown();
   if (gSource >= 0) deactivate();
   gOn = false;
   hwSync(cfg);
