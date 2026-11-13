@@ -174,3 +174,14 @@ lowercase letters, digits, `_`, and `-`, with uppercase folded down and a 1..32 
 Anything else becomes `unknown`, so current reasons containing spaces will normally report
 `unknown`. This strict choice keeps the field safe for a single-line, space-separated protocol and
 avoids leaking arbitrary state-file text. `none` is reserved for a non-error state.
+
+## D-016: Hyphenated version tags publish prereleases
+
+Chosen: the release job sets `prerelease` from `contains(github.ref_name, '-')`. A tag such as
+`v0.10.0-rc2` is then published as a prerelease, while a final tag such as `v0.10.0` stays a normal
+release. No new workflow input, secret, or dependency is introduced, and the asset list is
+unchanged.
+
+Assumption: the repository keeps its current convention that release-candidate tags contain a
+hyphen. The module version remains `v0.10.0` for the release candidate, so `v0.10.0-rc2` produces
+the same seven asset names as `v0.10.0-rc1` and does not replace or delete the rc1 tag or release.
