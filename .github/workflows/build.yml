@@ -152,23 +152,25 @@ jobs:
             "$READELF" -d "$f" | grep -E 'NEEDED|RPATH|RUNPATH|TEXTREL|BIND_NOW' || true
             "$READELF" -lW "$f" | grep -E 'LOAD|GNU_RELRO|GNU_STACK' || true
 
+            # grep without -q consumes the whole stream: with pipefail, -q closes the pipe early and
+            # llvm-readelf can exit 74 on the resulting EPIPE.
             case $f in
               *.arm64)
-                "$READELF" -h "$f" | grep -q 'Class:.*ELF64'
-                "$READELF" -h "$f" | grep -q 'Machine:.*AArch64'
+                "$READELF" -h "$f" | grep 'Class:.*ELF64' >/dev/null
+                "$READELF" -h "$f" | grep 'Machine:.*AArch64' >/dev/null
                 ;;
               *.arm)
-                "$READELF" -h "$f" | grep -q 'Class:.*ELF32'
-                "$READELF" -h "$f" | grep -q 'Machine:.*ARM'
+                "$READELF" -h "$f" | grep 'Class:.*ELF32' >/dev/null
+                "$READELF" -h "$f" | grep 'Machine:.*ARM' >/dev/null
                 ;;
             esac
-            "$READELF" -h "$f" | grep -q 'Type:.*DYN' || { echo "::error::$f is not PIE"; exit 1; }
-            "$READELF" -d "$f" | grep -q 'BIND_NOW' || { echo "::error::$f is not BIND_NOW"; exit 1; }
-            "$READELF" -d "$f" | grep -q 'TEXTREL' && { echo "::error::$f has TEXTREL"; exit 1; } || true
-            "$READELF" -d "$f" | grep -qE 'RPATH|RUNPATH' && { echo "::error::$f has RPATH/RUNPATH"; exit 1; } || true
-            "$READELF" -lW "$f" | grep -q 'GNU_RELRO' || { echo "::error::$f is not RELRO"; exit 1; }
-            "$READELF" -lW "$f" | grep -q 'GNU_STACK' || { echo "::error::$f has no GNU_STACK"; exit 1; }
-            ! "$READELF" -lW "$f" | grep -q 'GNU_STACK.*RWE' || { echo "::error::$f has an executable stack"; exit 1; }
+            "$READELF" -h "$f" | grep 'Type:.*DYN' >/dev/null || { echo "::error::$f is not PIE"; exit 1; }
+            "$READELF" -d "$f" | grep 'BIND_NOW' >/dev/null || { echo "::error::$f is not BIND_NOW"; exit 1; }
+            "$READELF" -d "$f" | grep 'TEXTREL' >/dev/null && { echo "::error::$f has TEXTREL"; exit 1; } || true
+            "$READELF" -d "$f" | grep -E 'RPATH|RUNPATH' >/dev/null && { echo "::error::$f has RPATH/RUNPATH"; exit 1; } || true
+            "$READELF" -lW "$f" | grep 'GNU_RELRO' >/dev/null || { echo "::error::$f is not RELRO"; exit 1; }
+            "$READELF" -lW "$f" | grep 'GNU_STACK' >/dev/null || { echo "::error::$f has no GNU_STACK"; exit 1; }
+            ! "$READELF" -lW "$f" | grep 'GNU_STACK.*RWE' >/dev/null || { echo "::error::$f has an executable stack"; exit 1; }
             ALIGN=$("$READELF" -lW "$f" | awk '$1 == "LOAD" { print $NF; exit }')
             [ -n "$ALIGN" ] || { echo "::error::$f has no LOAD segment"; exit 1; }
             [ $((ALIGN)) -ge 16384 ] || { echo "::error::$f LOAD alignment $ALIGN < 16 KB"; exit 1; }
