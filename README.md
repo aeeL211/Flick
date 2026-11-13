@@ -74,15 +74,16 @@ Kode lama tidak berubah: `1` sudah berjalan, `2` touchscreen tidak ditemukan, `3
 
 | Perintah | Balasan | Keterangan |
 |---|---|---|
-| `HELLO <token>` | `OK flick=<versi> proto=1` | Wajib dalam 2 detik setelah koneksi; gagal = `ERR auth` lalu ditutup 300 ms kemudian. |
+| `HELLO <token>` | `OK flick=<versi> proto=1 caps=hold,err` | Wajib dalam 2 detik setelah koneksi; gagal = `ERR auth` lalu ditutup 300 ms kemudian. |
 | `PING` | `PONG` | Cek koneksi. |
 | `GET` | `CFG sens_h=... pkgs=...` | Nilai efektif di memori. |
 | `SET k=v ...` | `OK` atau `ERR <key> <reason>` | Semua pasangan divalidasi dulu; satu gagal berarti tidak ada perubahan. |
-| `STATUS` | `ST state=... paused=... up=... pid=...` | `state` adalah `active`, `idle`, atau `off`. |
-| `PAUSE` / `RESUME` | `OK` | PAUSE memakai jalur pelepasan aman dan tidak disimpan ke config. |
-| `SUB` / `UNSUB` | `OK` | SUB menerima `EVT state=... paused=...` saat state berubah. |
+| `STATUS` | `ST state=... paused=... up=... pid=... hold=... err=...` | `state` adalah `active`, `idle`, atau `off`; `paused` adalah nilai efektif. |
+| `PAUSE` / `RESUME` | `OK` | PAUSE memakai jalur pelepasan aman dan tidak disimpan ke config. RESUME hanya membersihkan PAUSE. |
+| `HOLD [detik]` / `UNHOLD` | `OK` | Lease 1..120 detik (default 30) yang terikat koneksi. UNHOLD hanya membersihkan hold. |
+| `SUB` / `UNSUB` | `OK` | SUB menerima `EVT state=... paused=... hold=...` saat state, paused, atau hold berubah. |
 | `STATS` | `STATS grabs=... releases=... ...` | Statistik proses untuk diagnostik. |
-| `STOP` | `OK` | Meminta daemon berhenti bersih setelah balasan terkirim. |
+| `STOP` | `OK` | Meminta daemon berhenti bersih setelah balasan terkirim; hold aktif dilepas. |
 
 Satu klien terautentikasi dan satu handshake pending diperbolehkan. Koneksi pending yang baru selalu
 menutup koneksi pending lama, tetapi tidak pernah mengganggu klien terautentikasi; hanya `HELLO`
@@ -90,6 +91,15 @@ yang berhasil yang dapat menggantikan klien lama. Handshake yang gagal tidak men
 Baris dibatasi 1024 byte, perintah tidak dikenal dijawab `ERR cmd`, dan SET memakai validasi ketat
 yang sama dengan batas config. Penulisan config digabung dan dibatasi satu write per 500 ms; jangan
 menjalankan `SET` dari aplikasi bersamaan dengan `ctl.sh save` dari WebUI.
+
+`HOLD [detik]` memasang jeda sementara dengan lease 1..120 detik (default 30). Hold otomatis
+dilepas saat koneksi terautentikasi terputus, digantikan klien lain, lease habis, atau daemon
+berhenti. Hold tidak disimpan ke config dan tidak bertahan setelah restart. `RESUME` hanya
+membersihkan PAUSE; `UNHOLD` hanya membersihkan hold, sehingga `paused` tetap `1` bila salah satunya
+masih aktif. `STATUS` menambahkan `hold=<0|1>` dan `err=<none|alasan>`; alasan error disanitasi
+menjadi huruf kecil, angka, `_`, dan `-`, maksimal 32 karakter, selain itu `unknown`. Klien wajib
+mengabaikan field `key=value` yang tidak dikenal. Versi berikutnya hanya boleh menambah field baru
+di akhir baris, dan penambahan itu tidak mengubah `proto=1`.
 
 Selama `--listen` aktif, `notify.sh` tidak dipanggil karena notifikasi menjadi tanggung jawab
 aplikasi. `hw.sh` tetap mengikuti pengaturan `hw`. Spesifikasi lengkap, termasuk persistence dan

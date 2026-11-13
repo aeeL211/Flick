@@ -77,6 +77,10 @@ constexpr int ctlChunk = 512;
 constexpr int64_t ctlAuthMs = 2000;
 constexpr int64_t ctlLingerMs = 300;
 constexpr int64_t ctlPersistMs = 500;
+constexpr int ctlHoldMin = 1;
+constexpr int ctlHoldMax = 120;
+constexpr int ctlHoldDefault = 30;
+constexpr int ctlErrMax = 32;
 constexpr int exitCtlArgs = 10;
 constexpr int exitCtlListen = 11;
 constexpr char defPkgs[] = "com.dts.freefireth,com.dts.freefiremax";
@@ -1081,6 +1085,9 @@ static int64_t gCtlPersistDueMs = 0;
 static unsigned gCtlPendingMask = 0;
 static char gCtlEvtState[16];
 static int gCtlEvtPaused = -1;
+static int gCtlEvtHold = -1;
+static bool gCtlHoldActive = false;
+static int64_t gCtlHoldDeadlineMs = 0;
 
 // the compiler must not turn this into a dead store
 static void wipeMem(void *p, size_t n) {
@@ -1135,9 +1142,26 @@ static void ctlFdSetup(int fd) {
   if (fdf >= 0) (void)fcntl(fd, F_SETFD, fdf | FD_CLOEXEC);
 }
 
+// PAUSE is session state and HOLD is a lease tied to the authenticated connection. STATUS and EVT
+// always report this effective value; the grab is released by the same gDown == 0 path either way.
+static bool ctlEffectivePaused() { return gPaused || gCtlHoldActive; }
+
+// drops an active hold and asks the main loop to re-evaluate immediately. the caller publishes the
+// state change, because closing a client has to publish without a recipient.
+static bool ctlDropHold() {
+  if (!gCtlHoldActive) { gCtlHoldDeadlineMs = 0; return false; }
+  gCtlHoldActive = false;
+  gCtlHoldDeadlineMs = 0;
+  gTickNow = true;
+  return true;
+}
+
 static void ctlClose(CtlConn &c) {
+  bool wasClient = &c == &gCtlClient;
+  if (wasClient) (void)ctlDropHold();
   if (c.fd >= 0) close(c.fd);
   ctlConnReset(c);
+  if (wasClient) ctlPublishState();
 }
 
 static bool ctlQueue(CtlConn &c, const char *fmt, ...) __attribute__((format(printf, 2, 3)));
@@ -1183,18 +1207,40 @@ static bool ctlFlush(CtlConn &c) {
 
 static const char *ctlStateName() {
   if (gSource >= 0) return "active";
-  if (gPaused || !strncmp(gState, "error:", 6)) return "off";
+  if (ctlEffectivePaused() || !strncmp(gState, "error:", 6)) return "off";
   return "idle";
+}
+
+// The state file reason is free text such as "open errno=2". The wire field is a bounded token:
+// lowercase letters, digits, underscore, and dash only. Anything that does not fit is "unknown".
+static void ctlStateErr(char *b, size_t n) {
+  const char *r = gState;
+  if (strncmp(r, "error:", 6)) { snprintf(b, n, "none"); return; }
+  r += 6;
+  size_t len = strlen(r);
+  if (!len || len > (size_t)ctlErrMax || n <= len) { snprintf(b, n, "unknown"); return; }
+  for (size_t i = 0; i < len; i++) {
+    char ch = r[i];
+    if (ch >= 'A' && ch <= 'Z') ch = (char)(ch - 'A' + 'a');
+    if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '_' || ch == '-')) {
+      snprintf(b, n, "unknown");
+      return;
+    }
+    b[i] = ch;
+  }
+  b[len] = 0;
 }
 
 static void ctlPublishState() {
   const char *s = ctlStateName();
-  int p = gPaused ? 1 : 0;
-  if (!strcmp(s, gCtlEvtState) && p == gCtlEvtPaused) return;
+  int p = ctlEffectivePaused() ? 1 : 0;
+  int h = gCtlHoldActive ? 1 : 0;
+  if (!strcmp(s, gCtlEvtState) && p == gCtlEvtPaused && h == gCtlEvtHold) return;
   snprintf(gCtlEvtState, sizeof gCtlEvtState, "%s", s);
   gCtlEvtPaused = p;
+  gCtlEvtHold = h;
   if (gCtlClient.fd >= 0 && gCtlClient.authed && gCtlClient.subscribed)
-    if (!ctlQueue(gCtlClient, "EVT state=%s paused=%d\n", s, p)) ctlClose(gCtlClient);
+    if (!ctlQueue(gCtlClient, "EVT state=%s paused=%d hold=%d\n", s, p, h)) ctlClose(gCtlClient);
 }
 
 static unsigned ctlMaskKey(const char *k) {
@@ -1326,6 +1372,7 @@ static int64_t ctlDeadline() {
   int64_t d = -1;
   if (gCtlPending.fd >= 0)
     d = gCtlPending.failed ? gCtlPending.closeAtMs : gCtlPending.acceptedMs + ctlAuthMs;
+  if (gCtlHoldActive && (d < 0 || gCtlHoldDeadlineMs < d)) d = gCtlHoldDeadlineMs;
   if (gCtlPersistDueMs && (d < 0 || gCtlPersistDueMs < d)) d = gCtlPersistDueMs;
   return d;
 }
@@ -1361,6 +1408,7 @@ static bool ctlAccept(int64_t now) {
 // a new handshake replaces the old client only after the token is accepted
 static bool ctlPromote(CtlConn &src) {
   if (gCtlClient.fd >= 0) ctlClose(gCtlClient);
+  (void)ctlDropHold();
   gCtlClient = src;
   gCtlClient.authed = true;
   gCtlClient.failed = false;
@@ -1368,7 +1416,8 @@ static bool ctlPromote(CtlConn &src) {
   gCtlClient.stopWhenDrained = false;
   gCtlClient.subscribed = false;
   ctlConnReset(gCtlPending);
-  if (!ctlQueue(gCtlClient, "OK flick=%s proto=1\n", FLICK_VERSION)) {
+  ctlPublishState();
+  if (!ctlQueue(gCtlClient, "OK flick=%s proto=1 caps=hold,err\n", FLICK_VERSION)) {
     ctlClose(gCtlClient);
     return false;
   }
@@ -1425,6 +1474,36 @@ static void ctlCmdGet(CtlConn &c) {
            gCfg->hw, gCfg->filter, gCfg->pkgs);
 }
 
+// HOLD [seconds]: install or extend a connection-bound lease. A repeated HOLD never shortens a
+// lease that is already longer than the requested one.
+static void ctlCmdHold(CtlConn &c, const char *args, int64_t now) {
+  int seconds = ctlHoldDefault;
+  const char *p = args;
+  while (*p == ' ') p++;
+  if (*p) {
+    const char *start = p;
+    if (*start < '0' || *start > '9') { ctlReply(c, "ERR hold range\n"); return; }
+    while (*p && *p != ' ') p++;
+    const char *end = p;
+    while (*p == ' ') p++;
+    if (*p) { ctlReply(c, "ERR hold range\n"); return; }
+    errno = 0;
+    char *parsed = nullptr;
+    long v = strtol(start, &parsed, 10);
+    if (parsed != end || errno == ERANGE || v < ctlHoldMin || v > ctlHoldMax) {
+      ctlReply(c, "ERR hold range\n");
+      return;
+    }
+    seconds = (int)v;
+  }
+  int64_t until = now + (int64_t)seconds * 1000;
+  if (!gCtlHoldActive || until > gCtlHoldDeadlineMs) gCtlHoldDeadlineMs = until;
+  gCtlHoldActive = true;
+  gTickNow = true;
+  ctlReply(c, "OK\n");
+  ctlPublishState();
+}
+
 // returns true when a successful HELLO moved this connection into the authenticated slot
 static bool ctlHandleLine(CtlConn &c, int64_t now) {
   char *line = c.in;
@@ -1454,8 +1533,11 @@ static bool ctlHandleLine(CtlConn &c, int64_t now) {
   else if (!strcmp(line, "STATUS")) {
     int64_t up = (now - gCtlStartMs) / 1000;
     if (up < 0) up = 0;
-    ctlReply(c, "ST state=%s paused=%d up=%lld pid=%d\n", ctlStateName(), gPaused ? 1 : 0,
-             (long long)up, (int)getpid());
+    char err[ctlErrMax + 1];
+    ctlStateErr(err, sizeof err);
+    ctlReply(c, "ST state=%s paused=%d up=%lld pid=%d hold=%d err=%s\n", ctlStateName(),
+             ctlEffectivePaused() ? 1 : 0, (long long)up, (int)getpid(), gCtlHoldActive ? 1 : 0,
+             err);
   } else if (!strcmp(line, "PAUSE")) {
     gPaused = true;
     gTickNow = true;
@@ -1466,6 +1548,14 @@ static bool ctlHandleLine(CtlConn &c, int64_t now) {
     gTickNow = true;
     ctlReply(c, "OK\n");
     ctlPublishState();
+  } else if (!strcmp(line, "HOLD")) {
+    ctlCmdHold(c, line + 4, now);
+  } else if (!strncmp(line, "HOLD ", 5)) {
+    ctlCmdHold(c, line + 5, now);
+  } else if (!strcmp(line, "UNHOLD")) {
+    bool released = ctlDropHold();
+    ctlReply(c, "OK\n");
+    if (released) ctlPublishState();
   } else if (!strcmp(line, "SUB")) {
     c.subscribed = true;
     ctlReply(c, "OK\n");
@@ -1477,8 +1567,9 @@ static bool ctlHandleLine(CtlConn &c, int64_t now) {
              gStatReleases, gStatSynDropped, gProcScans);
   } else if (!strcmp(line, "STOP")) {
     c.stopWhenDrained = true;
-    c.subscribed = false;
     ctlReply(c, "OK\n");
+    if (ctlDropHold()) ctlPublishState();
+    c.subscribed = false;
     if (c.fd < 0) gStop = 1;
   } else {
     ctlReply(c, "ERR cmd\n");
@@ -1553,6 +1644,10 @@ static void ctlConnService(CtlConn &c, short ev, int64_t now) {
 
 // called after poll with the readiness of the three control descriptors
 static void ctlService(int64_t now, short listenEv, short pendingEv, short clientEv) {
+  if (gCtlHoldActive && now >= gCtlHoldDeadlineMs) {
+    (void)ctlDropHold();
+    ctlPublishState();
+  }
   ctlFlushConfig(now);
   int pendingFd = gCtlPending.fd;
   int clientFd = gCtlClient.fd;
@@ -1630,6 +1725,7 @@ static int ctlStart(unsigned port) {
 static void ctlShutdown() {
   ctlClose(gCtlPending);
   ctlClose(gCtlClient);
+  (void)ctlDropHold();
   if (gCtlListen >= 0) { close(gCtlListen); gCtlListen = -1; }
   wipeMem(gCtlToken, sizeof gCtlToken);
   gCtlTokenLen = 0;
@@ -1758,7 +1854,7 @@ int main(int argc, char **argv) {
         loadConfig(cfgPath, cfg);
         hwSync(cfg);
       }
-      want = !gPaused && (!cfg.filter || inGame());
+      want = !ctlEffectivePaused() && (!cfg.filter || inGame());
       if (gSource < 0) {
         if (!want) {
           if (gOn) onChange(false, cfg);

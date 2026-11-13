@@ -127,11 +127,13 @@ HELLO <token>
 One or more spaces may separate `HELLO` and the token. Success reply:
 
 ```text
-OK flick=<version> proto=1
+OK flick=<version> proto=1 caps=hold,err
 ```
 
 `<version>` is the `version=` value of `module.prop` compiled into the daemon. Development and
-test builds use `dev` when no version is supplied.
+test builds use `dev` when no version is supplied. `caps` is a comma-separated list of optional
+feature groups understood by this daemon. `hold` advertises `HOLD`/`UNHOLD`; `err` advertises the
+`STATUS` error token. Clients must ignore capability names they do not know.
 
 Failure reply, then the 300 ms linger and close:
 
@@ -236,17 +238,33 @@ STATUS
 ```
 
 ```text
-ST state=<off|idle|active> paused=<0|1> up=<seconds> pid=<pid>
+ST state=<off|idle|active> paused=<0|1> up=<seconds> pid=<pid> hold=<0|1> err=<none|reason>
 ```
+
+The first four fields keep their original order and meaning. `hold` and `err` are appended fields.
 
 State mapping:
 
 - `active`: the daemon currently holds the touchscreen grab.
-- `off`: the daemon is not grabbing because it is paused, or because its last state is an error.
+- `off`: the daemon is not grabbing because effective pause is set, or because its last state is an
+  error.
 - `idle`: the daemon is running normally and is not grabbing (waiting for the target or release).
 
-`paused` is the in-memory PAUSE flag, never a config value. `up` is whole seconds since the event
-loop started. `pid` is `getpid()`.
+`paused` is the effective pause: the in-memory PAUSE flag OR an active hold. It is never a config
+value. `hold` is `1` while a `HOLD` lease is active. `up` is whole seconds since the event loop
+started. `pid` is `getpid()`.
+
+`err` is `none` when the current state is not an error. Otherwise the state file contains
+`error:<reason>` and `err` is a bounded token derived from `<reason>`:
+
+- uppercase `A`..`Z` are converted to lowercase;
+- only `a`..`z`, `0`..`9`, `_`, and `-` are accepted;
+- the reason must contain 1..32 characters;
+- an empty, overlong, or otherwise invalid reason is reported as `unknown`.
+
+The token never contains spaces, punctuation, or file contents. Current state reasons such as
+`open errno=2` contain a space, so they appear as `err=unknown` unless they are changed to a safe
+token in a future version.
 
 ### 3.6 PAUSE and RESUME
 
@@ -255,29 +273,70 @@ PAUSE
 RESUME
 ```
 
-Both answer `OK`. PAUSE makes the foreground decision unconditionally false. The daemon then uses
-the existing safe release path: the grab is released only when `gDown == 0` (no virtual finger is
-down). If a finger is still down, the release happens on the first later loop iteration where
-`gDown` is zero. RESUME clears the flag and forces a foreground re-evaluation. PAUSE is not saved
-to the config and does not survive a restart.
+Both answer `OK`. PAUSE sets the explicit PAUSE flag, which makes the foreground decision false. The
+daemon then uses the existing safe release path: the grab is released only when `gDown == 0` (no
+virtual finger is down). If a finger is still down, the release happens on the first later loop
+iteration where `gDown` is zero. RESUME clears only that flag and forces a foreground
+re-evaluation; it does not touch a hold. If a hold is still active, effective pause remains `1`
+after RESUME. PAUSE is not saved to the config and does not survive a restart.
 
-### 3.7 SUB and UNSUB
+### 3.7 HOLD and UNHOLD
+
+```text
+HOLD [<seconds>]
+UNHOLD
+```
+
+Both answer `OK`. `HOLD` installs a lease for the authenticated connection. `<seconds>` is optional,
+an integer from 1 to 120, and defaults to 30. A repeated `HOLD` extends the lease to at least
+`now + <seconds>`; it never shortens a lease that is already longer. If the effective pause does not
+change, a repeated `HOLD` produces no `EVT`. An invalid argument, extra token, or value outside
+1..120 is answered with:
+
+```text
+ERR hold range
+```
+
+`UNHOLD` clears only the hold; it does not clear the PAUSE flag. While a hold is active, effective
+pause is `1` and STATUS reports `hold=1`. The grab uses the same release path as PAUSE: release
+happens only when `gDown == 0`, never with a virtual finger down.
+
+The hold is not saved to the config and does not survive a restart. It is automatically released
+when:
+
+- the authenticated client disconnects;
+- a different client completes `HELLO` and replaces it;
+- the lease expires;
+- the daemon receives `STOP` or otherwise exits.
+
+Release on disconnect or replacement has no recipient for an `EVT`; the state baseline is still
+updated. Release on lease expiry or `STOP` publishes an `EVT` if the client is still subscribed and
+the state, effective pause, or hold value changed. On `STOP`, the `OK` reply is queued first, then
+the `EVT` if applicable, then the socket closes.
+
+The next hold deadline is included in the loop's `poll()` timeout, so expiry is handled without a
+new thread or timer. A hold belongs to one authenticated connection and is never transferred to a
+replacement connection.
+
+### 3.8 SUB and UNSUB
 
 ```text
 SUB
 UNSUB
 ```
 
-Both answer `OK`. A subscribed client receives one line on every change of `state` or `paused`:
+Both answer `OK`. A subscribed client receives one line on every change of `state`, effective
+`paused`, or `hold`:
 
 ```text
-EVT state=<off|idle|active> paused=<0|1>
+EVT state=<off|idle|active> paused=<0|1> hold=<0|1>
 ```
 
 `EVT` lines may be queued between replies. There is no initial EVT on SUB; use STATUS for the
-current value. Changing `sens_h` or another config value alone does not produce an EVT.
+current value. Changing `sens_h` or another config value alone does not produce an EVT. Extending a
+lease without changing `state`, `paused`, or `hold` does not produce an EVT.
 
-### 3.8 STATS
+### 3.9 STATS
 
 ```text
 STATS
@@ -297,13 +356,15 @@ Counters are monotonic for the lifetime of the process:
 
 They are diagnostics, not exact event counts.
 
-### 3.9 STOP
+### 3.10 STOP
 
 ```text
 STOP
 ```
 
-The server queues `OK`, flushes it, closes all control sockets, and requests a clean daemon exit.
+The server queues `OK`, releases an active hold (queuing an `EVT` first when the client is still
+subscribed and the release changes the reported state), flushes the output, closes all control
+sockets, and requests a clean daemon exit.
 The normal exit path releases the grab, restores `hw.sh` state, waits briefly for hooks, destroys
 the uinput device, removes the pid file, and removes the state file. If the reply cannot be queued
 because the output buffer is full or cannot be flushed because the peer vanished, the daemon still
@@ -314,7 +375,7 @@ exits.
 - The listener and both connection slots are integrated into the existing `poll()` loop. No
   thread, fork, or blocking socket call is introduced.
 - The poll timeout is shortened to the nearest control deadline: authentication timeout, 300 ms
-  auth-failure linger, or the next coalesced config write.
+  auth-failure linger, the next hold lease expiry, or the next coalesced config write.
 - Replies and events use a fixed 4096-byte per-connection output buffer. A client that fills it is
   closed rather than allowed to grow memory or stall the touch path.
 - Input uses a fixed 1025-byte line buffer per connection and a fixed read chunk. No allocation is
@@ -324,8 +385,8 @@ exits.
   A SET can call the existing `hwSync()` path, which runs the fixed `hw.sh` hook just like a normal
   config change.
 - The existing touch event path and math functions are not changed. The loop additions are
-  readiness/deadline handling, the PAUSE flag and immediate re-evaluation request, and the three
-  statistics counters.
+  readiness/deadline handling, effective pause (the PAUSE flag or a hold lease) with an immediate
+  re-evaluation request, and the statistics counters.
 
 ## 5. Test plan
 
@@ -333,19 +394,29 @@ exits.
 0 on loopback, learns the assigned port with `getsockname`, and drives the server with the same
 `ctlService()` entry point used by the daemon. It covers:
 
-1. Correct HELLO, including the version/protocol prefix.
-2. Wrong token: `ERR auth`, 300 ms linger, then close.
-3. HELLO timeout: no handshake for 2 seconds, then `ERR auth` and close.
-4. Command before HELLO: `ERR auth`.
-5. PING/PONG and unknown command.
-6. SET valid live values; GET returns the same effective values.
-7. SET invalid in a multi-pair command: error reply and no partial memory or file effect.
-8. SET persistence merge and the 500 ms coalescing window.
-9. SUB receives EVT on PAUSE/RESUME; UNSUB stops events.
-10. A line longer than 1024 bytes closes the connection.
-11. A second authenticated client replaces and closes the first.
-12. STOP replies `OK`, flushes, and sets the clean-exit request.
-13. STATUS and STATS reply shapes.
+1. Correct HELLO, including the version/protocol prefix and `caps=hold,err`.
+2. Invalid token or port exits `10`; an occupied port exits `11`; a failed start scrubs the token.
+3. Wrong token: `ERR auth`, 300 ms linger, then close.
+4. HELLO timeout: no handshake for 2 seconds, then `ERR auth` and close.
+5. Command before HELLO: `ERR auth`.
+6. PING/PONG and unknown command.
+7. SET valid live values; GET returns the same effective values.
+8. SET invalid in a multi-pair command: error reply and no partial memory or file effect.
+9. SET persistence merge and the 500 ms coalescing window.
+10. SUB receives EVT on PAUSE/RESUME; UNSUB stops events.
+11. A line longer than 1024 bytes closes the connection.
+12. A second authenticated client replaces and closes the first. A newer pending connection
+    replaces the older pending one without disturbing the authenticated client.
+13. STATUS reports `hold` and the sanitized `err`; unsafe or overlong reasons become `unknown`.
+14. HOLD reports `paused=1` and `hold=1` in EVT and STATUS; UNHOLD clears the lease.
+15. A one-second lease expires and releases the hold; a repeated HOLD extends the lease without a
+    spurious EVT; the poll deadline follows the lease.
+16. Disconnecting the authenticated client clears its hold; a replacement client starts without a
+    hold.
+17. PAUSE/HOLD interaction: UNHOLD while PAUSE is active leaves `paused=1`; RESUME while HOLD is
+    active leaves `paused=1`.
+18. STOP replies `OK`, releases the hold, flushes the optional EVT, and sets the clean-exit request.
+19. STATUS and STATS reply shapes.
 
 The test is compiled twice in CI, once with `-O2` and once with ASan + UBSan. It is a required
 step in the `test` job, and the packaging job still depends on that job. The existing selftest,
@@ -360,14 +431,17 @@ On a `v*` tag the release job publishes:
 - `flick-arm64` and `flick-arm`, the raw stripped binaries;
 - `flick-arm64.sha256` and `flick-arm.sha256`, each in `sha256sum` format.
 
-The zip layout and deterministic packaging are unchanged. No tag is created by this work.
+The zip layout and deterministic packaging are unchanged. The `v0.10.0-rc2` tag uses this same asset
+set and the release job marks hyphenated tags such as release candidates as prereleases. The module
+version stays `v0.10.0`, so the asset names remain identical to `v0.10.0-rc1`.
 
 ## 7. Explicitly rejected alternatives
 
 - A new thread or blocking accept/read loop: violates the single-loop and no-blocking-call rule.
 - `0.0.0.0` binding: exposes control beyond the device.
 - Client-supplied paths or shell commands: unnecessary attack surface.
-- Persisting PAUSE: the flag is session state by design.
+- Persisting PAUSE or HOLD: both are session state by design. A hold must disappear with its
+  connection so a crashed or frozen application cannot leave Flick paused indefinitely.
 - Rewriting the sensitivity math or config-file parser semantics: both are frozen by the existing
   selftest and compatibility contract. SET uses a strict mode of the same parser and the same
   range constants.

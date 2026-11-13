@@ -277,7 +277,7 @@ int main() {
   check(gCtlPending.fd >= 0, "first connection occupies the pending slot");
   check(sendAll(a, "HELLO " + token + "\n"), "HELLO is sent");
   serviceAt(T + 11);
-  std::string hello = std::string("OK flick=") + FLICK_VERSION + " proto=1";
+  std::string hello = std::string("OK flick=") + FLICK_VERSION + " proto=1 caps=hold,err";
   expectLine(a, hello, "correct HELLO returns the version and protocol");
   check(gCtlClient.fd >= 0 && gCtlPending.fd < 0, "successful HELLO promotes the client");
 
@@ -429,12 +429,12 @@ int main() {
   check(sendAll(a, "PAUSE\n"), "PAUSE is sent");
   serviceAt(e + 1);
   expectLine(a, "OK", "PAUSE is acknowledged");
-  expectLine(a, "EVT state=off paused=1", "PAUSE publishes the paused event");
+  expectLine(a, "EVT state=off paused=1 hold=0", "PAUSE publishes the paused event");
   check(gPaused, "PAUSE sets the in-memory flag");
   check(sendAll(a, "RESUME\n"), "RESUME is sent");
   serviceAt(e + 2);
   expectLine(a, "OK", "RESUME is acknowledged");
-  expectLine(a, "EVT state=idle paused=0", "RESUME publishes the idle event");
+  expectLine(a, "EVT state=idle paused=0 hold=0", "RESUME publishes the idle event");
   check(!gPaused, "RESUME clears the in-memory flag");
   check(sendAll(a, "UNSUB\n"), "UNSUB is sent");
   serviceAt(e + 3);
@@ -497,30 +497,204 @@ int main() {
   expectClosed(o, "overlong-line peer sees the close");
   close(o);
 
-  int64_t statusAt = T + 9000;
+  int64_t errAt = r + 100;
+  setState("error:grab_timeout");
+  char errStatus[192];
+  snprintf(errStatus, sizeof errStatus,
+           "ST state=off paused=0 up=%lld pid=%d hold=0 err=grab_timeout",
+           (long long)((errAt - T) / 1000), (int)getpid());
+  check(sendAll(n, "STATUS\n"), "STATUS with a safe error reason is sent");
+  serviceAt(errAt);
+  expectLine(n, errStatus, "STATUS reports a sanitized error reason");
+
+  setState("error:Grab Bad!");
+  snprintf(errStatus, sizeof errStatus, "ST state=off paused=0 up=%lld pid=%d hold=0 err=unknown",
+           (long long)((errAt + 1 - T) / 1000), (int)getpid());
+  check(sendAll(n, "STATUS\n"), "STATUS with an unsafe error reason is sent");
+  serviceAt(errAt + 1);
+  expectLine(n, errStatus, "unsafe error characters become unknown");
+
+  setState("error:abcdefghijklmnopqrstuvwxyz1234567");
+  snprintf(errStatus, sizeof errStatus, "ST state=off paused=0 up=%lld pid=%d hold=0 err=unknown",
+           (long long)((errAt + 2 - T) / 1000), (int)getpid());
+  check(sendAll(n, "STATUS\n"), "STATUS with an overlong error reason is sent");
+  serviceAt(errAt + 2);
+  expectLine(n, errStatus, "overlong error reason becomes unknown");
+
+  setState("idle");
+  int64_t holdAt = r + 200;
+  check(sendAll(n, "SUB\n"), "SUB before HOLD is sent");
+  serviceAt(holdAt);
+  expectLine(n, "OK", "SUB before HOLD is acknowledged");
+  expectNoLine(n, "SUB before HOLD sends no initial EVT");
+  std::string beforeHold = readFile(cfgPath);
+  check(sendAll(n, "HOLD 0\n"), "out-of-range HOLD is sent");
+  serviceAt(holdAt + 1);
+  expectLine(n, "ERR hold range", "out-of-range HOLD is rejected");
+  check(!gCtlHoldActive && !gPaused, "rejected HOLD changes nothing");
+
+  int64_t h1 = holdAt + 10;
+  check(sendAll(n, "HOLD 1\n"), "one-second HOLD is sent");
+  serviceAt(h1);
+  expectLine(n, "OK", "HOLD is acknowledged");
+  expectLine(n, "EVT state=off paused=1 hold=1", "HOLD publishes paused and hold");
+  check(gCtlHoldActive && !gPaused, "HOLD is separate from the PAUSE flag");
+  check(gCtlHoldDeadlineMs == h1 + 1000, "HOLD expires after the requested lease");
+  check(ctlDeadline() == gCtlHoldDeadlineMs, "poll deadline follows the hold lease");
+  check(readFile(cfgPath) == beforeHold, "HOLD does not write the config file");
+
+  snprintf(errStatus, sizeof errStatus,
+           "ST state=off paused=1 up=%lld pid=%d hold=1 err=none",
+           (long long)((h1 + 1 - T) / 1000), (int)getpid());
+  check(sendAll(n, "STATUS\n"), "STATUS with an active hold is sent");
+  serviceAt(h1 + 1);
+  expectLine(n, errStatus, "STATUS reports paused=1 and hold=1");
+
+  serviceAt(h1 + 1000);
+  expectLine(n, "EVT state=idle paused=0 hold=0", "one-second lease expiry releases the hold");
+  check(!gCtlHoldActive && !ctlEffectivePaused(), "expired lease clears effective pause");
+
+  int64_t h2 = holdAt + 1250;
+  check(sendAll(n, "HOLD 1\n"), "HOLD before the extension test is sent");
+  serviceAt(h2);
+  expectLine(n, "OK", "HOLD before the extension test is acknowledged");
+  expectLine(n, "EVT state=off paused=1 hold=1", "HOLD before the extension is published");
+  int64_t renew = h2 + 100;
+  check(sendAll(n, "HOLD 3\n"), "repeated HOLD is sent");
+  serviceAt(renew);
+  expectLine(n, "OK", "repeated HOLD is acknowledged");
+  expectNoLine(n, "repeated HOLD sends no event when the state is unchanged");
+  check(gCtlHoldDeadlineMs == renew + 3000, "repeated HOLD extends the lease");
+  serviceAt(h2 + 1001);
+  check(gCtlHoldActive, "extended lease survives the original deadline");
+  expectNoLine(n, "renewed hold sends no spurious event");
+  serviceAt(renew + 3000);
+  expectLine(n, "EVT state=idle paused=0 hold=0", "extended lease expiry releases the hold");
+  check(!gCtlHoldActive, "extended lease is cleared on expiry");
+
+  int64_t h3 = renew + 3100;
+  check(sendAll(n, "HOLD\n"), "default HOLD is sent");
+  serviceAt(h3);
+  expectLine(n, "OK", "default HOLD is acknowledged");
+  expectLine(n, "EVT state=off paused=1 hold=1", "default HOLD is published");
+  check(gCtlHoldDeadlineMs == h3 + 30000, "HOLD defaults to 30 seconds");
+  check(sendAll(n, "UNHOLD\n"), "UNHOLD is sent");
+  serviceAt(h3 + 1);
+  expectLine(n, "OK", "UNHOLD is acknowledged");
+  expectLine(n, "EVT state=idle paused=0 hold=0", "UNHOLD publishes the cleared state");
+  check(!gCtlHoldActive, "UNHOLD clears the lease");
+  check(ctlDeadline() == -1, "UNHOLD removes the hold deadline");
+
+  int64_t h4 = h3 + 100;
+  check(sendAll(n, "HOLD 1\n"), "HOLD before disconnect is sent");
+  serviceAt(h4);
+  expectLine(n, "OK", "HOLD before disconnect is acknowledged");
+  expectLine(n, "EVT state=off paused=1 hold=1", "HOLD before disconnect is published");
+  close(n);
+  serviceAt(h4 + 1);
+  check(!gCtlHoldActive && !ctlEffectivePaused(), "client disconnect clears the hold");
+  check(gCtlClient.fd < 0, "disconnected authenticated client is released");
+
+  int64_t h5 = h4 + 100;
+  n = connectClient();
+  check(n >= 0, "client reconnects after hold cleanup");
+  serviceAt(h5);
+  check(gCtlPending.fd >= 0, "reconnected client occupies the pending slot");
+  check(sendAll(n, "HELLO " + token + "\n"), "reconnected client HELLOs");
+  serviceAt(h5 + 1);
+  expectLine(n, hello, "reconnected client authenticates");
+
+  check(sendAll(n, "SUB\n"), "SUB before replacement is sent");
+  serviceAt(h5 + 2);
+  expectLine(n, "OK", "SUB before replacement is acknowledged");
+  expectNoLine(n, "SUB before replacement sends no initial EVT");
+  check(sendAll(n, "HOLD 30\n"), "HOLD before replacement is sent");
+  serviceAt(h5 + 3);
+  expectLine(n, "OK", "HOLD before replacement is acknowledged");
+  expectLine(n, "EVT state=off paused=1 hold=1", "HOLD before replacement is published");
+  int q = connectClient();
+  check(q >= 0, "replacement client connects during HOLD");
+  serviceAt(h5 + 10);
+  check(gCtlPending.fd >= 0, "replacement connection is pending");
+  check(sendAll(q, "HELLO " + token + "\n"), "replacement HELLO is sent");
+  serviceAt(h5 + 11);
+  expectLine(q, hello, "replacement client authenticates during HOLD");
+  check(gCtlClient.fd >= 0 && !gCtlClient.subscribed, "replacement starts unsubscribed");
+  check(!gCtlHoldActive && !ctlEffectivePaused(), "replacement clears the old hold");
+  expectClosed(n, "old client is closed when replaced during HOLD");
+  close(n);
+
+  int64_t h6 = h5 + 100;
+  check(sendAll(q, "SUB\n"), "SUB for PAUSE/HOLD interaction is sent");
+  serviceAt(h6);
+  expectLine(q, "OK", "SUB for PAUSE/HOLD interaction is acknowledged");
+  expectNoLine(q, "SUB for PAUSE/HOLD interaction sends no initial EVT");
+  check(sendAll(q, "PAUSE\n"), "PAUSE before HOLD is sent");
+  serviceAt(h6 + 1);
+  expectLine(q, "OK", "PAUSE before HOLD is acknowledged");
+  expectLine(q, "EVT state=off paused=1 hold=0", "PAUSE before HOLD is published");
+  check(sendAll(q, "HOLD 30\n"), "HOLD while PAUSE is active is sent");
+  serviceAt(h6 + 2);
+  expectLine(q, "OK", "HOLD while PAUSE is active is acknowledged");
+  expectLine(q, "EVT state=off paused=1 hold=1", "HOLD while PAUSE is active is published");
+  check(sendAll(q, "UNHOLD\n"), "UNHOLD while PAUSE is active is sent");
+  serviceAt(h6 + 3);
+  expectLine(q, "OK", "UNHOLD while PAUSE is active is acknowledged");
+  expectLine(q, "EVT state=off paused=1 hold=0", "UNHOLD leaves PAUSE effective");
+  check(gPaused && !gCtlHoldActive && ctlEffectivePaused(), "UNHOLD does not clear PAUSE");
+  check(sendAll(q, "HOLD 30\n"), "second HOLD while PAUSE is active is sent");
+  serviceAt(h6 + 4);
+  expectLine(q, "OK", "second HOLD while PAUSE is active is acknowledged");
+  expectLine(q, "EVT state=off paused=1 hold=1", "second HOLD while PAUSE is active is published");
+  check(sendAll(q, "RESUME\n"), "RESUME while HOLD is active is sent");
+  serviceAt(h6 + 5);
+  expectLine(q, "OK", "RESUME while HOLD is active is acknowledged");
+  expectNoLine(q, "RESUME while HOLD is active sends no event");
+  check(!gPaused && gCtlHoldActive && ctlEffectivePaused(), "RESUME leaves the hold effective");
+  snprintf(errStatus, sizeof errStatus,
+           "ST state=off paused=1 up=%lld pid=%d hold=1 err=none",
+           (long long)((h6 + 6 - T) / 1000), (int)getpid());
+  check(sendAll(q, "STATUS\n"), "STATUS with PAUSE cleared and HOLD active is sent");
+  serviceAt(h6 + 6);
+  expectLine(q, errStatus, "STATUS keeps paused=1 while HOLD is active");
+  check(sendAll(q, "UNHOLD\n"), "UNHOLD after RESUME is sent");
+  serviceAt(h6 + 7);
+  expectLine(q, "OK", "UNHOLD after RESUME is acknowledged");
+  expectLine(q, "EVT state=idle paused=0 hold=0", "UNHOLD after RESUME clears effective pause");
+  check(!gCtlHoldActive && !gPaused, "final UNHOLD clears the lease");
+
+  int64_t statusAt = T + 20000;
   gStatGrabs = 7;
   gStatReleases = 6;
   gStatSynDropped = 2;
   gProcScans = 42;
   char status[160];
-  snprintf(status, sizeof status, "ST state=idle paused=0 up=9 pid=%d", (int)getpid());
-  check(sendAll(n, "STATUS\n"), "STATUS is sent");
+  snprintf(status, sizeof status, "ST state=idle paused=0 up=20 pid=%d hold=0 err=none",
+           (int)getpid());
+  check(sendAll(q, "STATUS\n"), "STATUS is sent");
   serviceAt(statusAt);
-  expectLine(n, status, "STATUS reports state, paused, uptime, and pid");
-  check(sendAll(n, "STATS\n"), "STATS is sent");
+  expectLine(q, status, "STATUS reports state, paused, uptime, pid, hold, and err");
+  check(sendAll(q, "STATS\n"), "STATS is sent");
   serviceAt(statusAt + 1);
-  expectLine(n, "STATS grabs=7 releases=6 syn_dropped=2 scans=42",
+  expectLine(q, "STATS grabs=7 releases=6 syn_dropped=2 scans=42",
              "STATS reports all four counters");
 
-  int64_t stopAt = T + 10000;
+  int64_t stopAt = T + 21000;
+  check(sendAll(q, "HOLD 30\n"), "HOLD before STOP is sent");
+  serviceAt(stopAt - 10);
+  expectLine(q, "OK", "HOLD before STOP is acknowledged");
+  expectLine(q, "EVT state=off paused=1 hold=1", "HOLD before STOP is published");
+  check(gCtlHoldActive, "STOP test hold is active");
   std::string beforeStop = readFile(cfgPath);
   gCtlLastPersistMs = stopAt;
   gCtlPersistDueMs = 0;
-  check(sendAll(n, "SET resp=42\nSTOP\n"), "SET and STOP are pipelined");
+  check(sendAll(q, "SET resp=42\nSTOP\n"), "SET and STOP are pipelined");
   serviceAt(stopAt);
-  expectLine(n, "OK", "SET before STOP applies");
-  expectLine(n, "OK", "STOP is acknowledged");
+  expectLine(q, "OK", "SET before STOP applies");
+  expectLine(q, "OK", "STOP is acknowledged");
+  expectLine(q, "EVT state=idle paused=0 hold=0", "STOP releases the hold and publishes it");
   check(gStop == 1, "STOP requests a clean daemon exit");
+  check(!gCtlHoldActive, "STOP clears the hold");
   check(readFile(cfgPath) == beforeStop, "deferred SET is not written by the control loop");
   check(gCtlPendingMask == cfgBitResp, "STOP leaves the deferred write queued");
   ctlFlushConfigNow();
@@ -528,8 +702,8 @@ int main() {
   check(file.find("resp=42\n") != std::string::npos, "pending write is flushed on exit");
   check(countOf(file, "resp=") == 1u, "flushed key appears once");
   check(gCtlPendingMask == 0, "exit flush clears the queue");
-  expectClosed(n, "STOP peer sees the close");
-  close(n);
+  expectClosed(q, "STOP peer sees the close");
+  close(q);
 
   gStop = 0;
   ctlShutdown();

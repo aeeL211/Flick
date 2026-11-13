@@ -141,3 +141,36 @@ Reason: a local application that opens one connection and never authenticates mu
 sit on the only pending slot and delay the real app's reconnect. Replacing the stale pending socket
 is bounded work in the existing accept loop and does not add a thread or a queue. A pending socket
 cannot hold a lease because `HOLD` is accepted only after authentication.
+
+## D-014: HOLD is a connection-bound lease over the existing safe pause path
+
+Chosen: `HOLD [seconds]` installs a lease for the authenticated connection with a default of 30 s
+and a range of 1..120 s. A repeated HOLD uses `max(current deadline, now + seconds)`, so it can only
+extend a lease, never shorten it. `UNHOLD` clears only the hold. Effective pause is
+`PAUSE_flag || hold_active`, and both STATUS and EVT report that value. The main loop uses the same
+effective value for its foreground decision and the existing `gDown == 0` release path; no second
+grab or release path is introduced. The lease deadline is added to the existing `poll()` timeout
+calculation, so no thread or timer is created.
+
+The hold is released when the authenticated client is closed, replaced by a successful HELLO, the
+lease expires, or `STOP` arrives. Client close and replacement have no recipient for an EVT, so they
+only update the published baseline. Lease expiry and STOP publish an EVT if the client is still
+subscribed and the reported values change; on STOP the `OK` is queued first, then the EVT, then the
+socket closes. An invalid or extra HOLD argument is answered with `ERR hold range`.
+
+Assumption: a disconnect clears HOLD but not PAUSE. The requirement ties only HOLD to the
+connection, and an explicit PAUSE remains session state until RESUME or exit. A hold is never
+persisted and never transferred to a replacement connection.
+
+## D-015: Protocol additions stay additive and err is a bounded token
+
+Chosen: keep `proto=1` and append fields only at the end of existing lines. HELLO adds
+`caps=hold,err`; STATUS appends `hold` and `err`; EVT appends `hold`. Existing field order and
+meaning are unchanged. Clients must ignore key=value fields they do not recognize, and a later
+revision may only append fields.
+
+The state file reason is free text such as `open errno=2`. The wire `err` value accepts only
+lowercase letters, digits, `_`, and `-`, with uppercase folded down and a 1..32 character limit.
+Anything else becomes `unknown`, so current reasons containing spaces will normally report
+`unknown`. This strict choice keeps the field safe for a single-line, space-separated protocol and
+avoids leaking arbitrary state-file text. `none` is reserved for a non-error state.
