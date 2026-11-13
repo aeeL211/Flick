@@ -25,18 +25,18 @@ was green and the downloaded artifact had been checked locally.
 
 | Item | Baseline | Final |
 |---|---|---|
-| Commit | `8d9b390` (`main`) | `dfa6dd5` (latest CI; packaged files last changed at `84b2919`) |
-| Workflow run | [41944937637](https://github.com/aeeL211/Flick/actions/runs/41944937637) | [43381083297](https://github.com/aeeL211/Flick/actions/runs/43381083297) |
+| Commit | `8d9b390` (`main`) | `84b2919` (packaged source) |
+| Workflow run | [41944937637](https://github.com/aeeL211/Flick/actions/runs/41944937637) | [43380422292](https://github.com/aeeL211/Flick/actions/runs/43380422292) |
 | Plugin version | `v0.9.10`, code `28` | `v0.9.11`, code `29` |
 | Package | `Flick-v0.9.10.zip`, 42,677 bytes | `Flick-v0.9.11.zip`, 43,330 bytes |
 | Package SHA-256 | `24d82a15f1420b148ea6f8d57fd2b82efa8f7fce60ea6ece1569f0a01c1193cc` | `eb4320b11570ef160f21d2b66371286cf867bf0c6b38f25b0e1891c4804e1690` |
 | NDK | runner default | `27.3.13750724` |
 | Compiler mode | `-Os`, no hardening/page-size flags | `-Os` plus hardening and 16 KB alignment |
 
-The final package was downloaded from the `Flick` artifact of run `43381083297` and checked again
-with `sha256sum -c`. The earlier package-producing run `43380422292` produced the same zip hash, so
-the later documentation and CI commits did not change the package. The artifact contains the zip,
-its `.sha256`, the manifest, `build-info.txt`, and the size/flag metrics.
+The package was downloaded from the `Flick` artifact of run `43380422292` and checked with
+`sha256sum -c`. The later documentation/CI runs `43381083297` and `43381304008` reproduced the same
+zip hash, so those commits did not change the package. The artifact contains the zip, its `.sha256`,
+the manifest, `build-info.txt`, and the size/flag metrics.
 
 The zip timestamp is pinned to the last `module.prop` change, not to the latest commit. The build job
 checks out the full history so `git log` can resolve that change; a shallow checkout would treat
@@ -200,11 +200,12 @@ maximum page size also keeps the binaries valid on 4 KB devices.
 | [41944937637](https://github.com/aeeL211/Flick/actions/runs/41944937637) | baseline `main` build | success (selftest was advisory) |
 | [43379993436](https://github.com/aeeL211/Flick/actions/runs/43379993436) | pre-version-bump optimization build | success, tests required |
 | [43380422292](https://github.com/aeeL211/Flick/actions/runs/43380422292) | package build for `v0.9.11` | success, artifact verified |
-| [43381083297](https://github.com/aeeL211/Flick/actions/runs/43381083297) | latest docs/CI commit | success, same zip hash |
+| [43381083297](https://github.com/aeeL211/Flick/actions/runs/43381083297) | docs/CI reproducibility run | success, same zip hash |
+| [43381304008](https://github.com/aeeL211/Flick/actions/runs/43381304008) | docs follow-up reproducibility run | success, same zip hash |
 
 An intermediate run before the full-history fix used the docs commit timestamp and produced a
-different zip hash; it was superseded. The final workflow checks out full history, and run
-`43381083297` reproduced `eb4320...` from run `43380422292`.
+different zip hash; it was superseded. The final workflow checks out full history, and runs
+`43381083297` and `43381304008` reproduced `eb4320...` from run `43380422292`.
 
 The last run passed host and sanitizer selftests, the proc test, ShellCheck/`sh -n`, the WebUI syntax
 check, both cross-builds, ELF verification, deterministic double packaging, and checksum validation.
