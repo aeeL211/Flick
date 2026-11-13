@@ -286,7 +286,8 @@ static int readPids(int *out, int max) {
     if (got < 0 && errno == EINTR) continue;
     if (got <= 0) break;
     for (long off = 0; off < got;) {
-      const DirEntry *e = (const DirEntry *)(buf + off);
+      // buf is alignas(8) and getdents64 records are 8-byte aligned; void* keeps -Wcast-align quiet
+      const DirEntry *e = static_cast<const DirEntry *>(static_cast<const void *>(buf + off));
       if (e->len == 0) { got = 0; break; }
       off += e->len;
       if (e->name[0] < '1' || e->name[0] > '9') continue;
@@ -867,7 +868,8 @@ static bool cfgChanged(int ifd, const char *base) {
   ssize_t n = read(ifd, ib, sizeof ib);
   bool hit = false;
   for (char *q = ib; n > 0 && q < ib + n;) {
-    inotify_event *ev = (inotify_event *)q;
+    // ib is aligned for inotify_event and q only moves by whole records
+    inotify_event *ev = static_cast<inotify_event *>(static_cast<void *>(q));
     if (ev->len && !strcmp(ev->name, base)) hit = true;
     q += sizeof(inotify_event) + ev->len;
   }

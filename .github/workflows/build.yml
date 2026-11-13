@@ -207,7 +207,7 @@ jobs:
           python3 tools/package.py --root stage --out dist
           python3 tools/package.py --root stage --out dist-repro
           cmp dist/Flick-*.zip dist-repro/Flick-*.zip
-          sha256sum -c dist/Flick-*.zip.sha256
+          (cd dist && sha256sum -c Flick-*.zip.sha256)
           unzip -l dist/Flick-*.zip
 
       - name: Build info
