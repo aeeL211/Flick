@@ -70,7 +70,8 @@ The server keeps at most one authenticated client and one client that is still a
 - A connection that completes `HELLO` replaces and closes the current authenticated client.
 - A failed or timed-out handshake never replaces the authenticated client.
 - If both a pending handshake and an authenticated client already exist, a further connection is
-  accepted and closed immediately.
+  accepted and closed immediately. A failed handshake that is still in its 300 ms linger may be
+  replaced by a new pending connection.
 - Replacing a client clears its subscription. The new client starts unsubscribed.
 
 ## 3. Command grammar
@@ -280,10 +281,13 @@ flushed because the peer vanished, the daemon still exits.
   closed rather than allowed to grow memory or stall the touch path.
 - Input uses a fixed 1025-byte line buffer per connection and a fixed read chunk. No allocation is
   performed for client data.
-- The control path has no `system()`, `exec`, shell, or client-provided filesystem path. The only
-  file written is the daemon's existing `--config` path.
-- The existing touch event path and math functions are not changed. The only additions to the
-  loop are readiness handling, deadline handling, and the three statistics counters.
+- The control path never builds or executes a command from client input and never accepts a
+  client-provided filesystem path. The only file written is the daemon's existing `--config` path.
+  A SET can call the existing `hwSync()` path, which runs the fixed `hw.sh` hook just like a normal
+  config change.
+- The existing touch event path and math functions are not changed. The loop additions are
+  readiness/deadline handling, the PAUSE flag and immediate re-evaluation request, and the three
+  statistics counters.
 
 ## 5. Test plan
 

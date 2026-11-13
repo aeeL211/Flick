@@ -17,6 +17,7 @@ Dirancang untuk **Free Fire** dan **Free Fire Max**, tetapi daftar package bisa 
 - Filter package: Flick hanya diterapkan saat aplikasi target di foreground.
 - WebUI untuk mengatur semua opsi, melihat status, dan menghentikan daemon.
 - Notifikasi saat status berubah antara aktif dan idle.
+- Mode aplikasi opsional: kontrol daemon lewat socket loopback dengan token (`--listen`).
 
 ## Keamanan
 
@@ -30,6 +31,8 @@ Dirancang untuk **Free Fire** dan **Free Fire Max**, tetapi daftar package bisa 
 - Saat target sudah terdeteksi foreground, pemindaian `/proc` dilewati sampai status foreground
   berubah. Pemindaian penuh dilakukan sekali saat transisi, sehingga PID yang dipakai ulang tidak
   terlewat.
+- Control server hanya mendengarkan di `127.0.0.1`, memakai token dari environment, dan tidak
+  meneruskan input klien ke shell atau path filesystem mana pun.
 
 ## Instalasi
 
@@ -45,6 +48,50 @@ Dirancang untuk **Free Fire** dan **Free Fire Max**, tetapi daftar package bisa 
 Plugin ini membutuhkan AxManager dengan server version minimal `19200` (`axeronPlugin=19200`
 pada `module.prop`). Flick berjalan dengan hak akses shell dan tidak membutuhkan root.
 
+## Mode aplikasi
+
+Flick dapat dikendalikan langsung oleh aplikasi Android melalui TCP loopback. Fitur ini opt-in:
+tanpa `--listen` tidak ada socket yang dibuat, `FLICK_TOKEN` tidak dibaca, dan perilaku daemon
+sama seperti sebelumnya.
+
+1. Buat token acak 32 sampai 256 karakter. Hanya ASCII `!` sampai `~` yang diterima, jadi token
+   tidak boleh mengandung spasi atau baris baru.
+2. Set token sebagai environment variable, lalu jalankan daemon dengan port pilihan:
+   ```sh
+   export FLICK_TOKEN='token-rahasia-yang-panjang-dan-acak'
+   ./system/bin/flick --daemon --config ./config --pidfile ./flick.pid --listen 8765
+   ```
+3. Aplikasi membuka `127.0.0.1:8765`, mengirim `HELLO <token>`, lalu mengirim perintah satu baris
+   per pesan. Server hanya mendengarkan di `127.0.0.1`, bukan `0.0.0.0`.
+
+Token dibaca dari environment, disalin ke buffer tetap, lalu `FLICK_TOKEN` dihapus dari environment
+sebelum hook apa pun berjalan. Token tidak pernah ditulis ke log, config, atau pesan error. Jangan
+meletakkan token di argumen command line atau menyimpannya di log aplikasi. Token yang hilang atau
+tidak valid membuat daemon keluar dengan kode `2`; port tidak valid juga `2`; kegagalan bind
+termasuk `EADDRINUSE` menghasilkan kode `3`.
+
+| Perintah | Balasan | Keterangan |
+|---|---|---|
+| `HELLO <token>` | `OK flick=<versi> proto=1` | Wajib dalam 2 detik setelah koneksi; gagal = `ERR auth` lalu ditutup 300 ms kemudian. |
+| `PING` | `PONG` | Cek koneksi. |
+| `GET` | `CFG sens_h=... pkgs=...` | Nilai efektif di memori. |
+| `SET k=v ...` | `OK` atau `ERR <key> <reason>` | Semua pasangan divalidasi dulu; satu gagal berarti tidak ada perubahan. |
+| `STATUS` | `ST state=... paused=... up=... pid=...` | `state` adalah `active`, `idle`, atau `off`. |
+| `PAUSE` / `RESUME` | `OK` | PAUSE memakai jalur pelepasan aman dan tidak disimpan ke config. |
+| `SUB` / `UNSUB` | `OK` | SUB menerima `EVT state=... paused=...` saat state berubah. |
+| `STATS` | `STATS grabs=... releases=... ...` | Statistik proses untuk diagnostik. |
+| `STOP` | `OK` | Meminta daemon berhenti bersih setelah balasan terkirim. |
+
+Satu klien terautentikasi dan satu handshake pending diperbolehkan. `HELLO` yang berhasil akan
+menutup klien lama; handshake yang gagal tidak mengganggu klien lama. Baris dibatasi 1024 byte,
+perintah tidak dikenal dijawab `ERR cmd`, dan SET memakai validasi ketat yang sama dengan batas
+config. Penulisan config digabung dan dibatasi satu write per 500 ms; jangan menjalankan `SET` dari
+aplikasi bersamaan dengan `ctl.sh save` dari WebUI.
+
+Selama `--listen` aktif, `notify.sh` tidak dipanggil karena notifikasi menjadi tanggung jawab
+aplikasi. `hw.sh` tetap mengikuti pengaturan `hw`. Spesifikasi lengkap, termasuk persistence dan
+penanganan error, ada di [`docs/CONTROL_PROTOCOL.md`](docs/CONTROL_PROTOCOL.md).
+
 ## Build
 
 Workflow GitHub Actions berjalan pada setiap branch dan pull request. Packaging tidak akan dimulai
@@ -52,6 +99,7 @@ sebelum semua pemeriksaan ini lulus:
 
 - selftest host (`-O2`) dan selftest host dengan ASan + UBSan;
 - unit test deteksi foreground dengan `/proc` palsu;
+- test host protokol kontrol (`-O2`) dan test yang sama dengan ASan + UBSan;
 - microbenchmark jalur matematika `-O2` vs `-Os`;
 - cross-build selftest untuk `arm64` dan `arm`;
 - `shellcheck` dan `sh -n` untuk semua script;
@@ -59,18 +107,22 @@ sebelum semua pemeriksaan ini lulus:
 - build daemon `arm64` + `arm`, verifikasi ELF/PIE/RELRO/BIND_NOW/16 KB, lalu packaging deterministik
   dengan checksum `.sha256`.
 
-Artifact `Flick` berisi `Flick-v*.zip`, checksum, manifest, dan `build-info.txt`. Detail hasil
-pengukuran ada di [`docs/VERIFICATION.md`](docs/VERIFICATION.md).
+Artifact `Flick` berisi `Flick-v*.zip`, checksum, manifest, `build-info.txt`, serta binary mentah
+`flick-arm64`, `flick-arm`, dan masing-masing `.sha256`. Pada tag `v*`, semua file tersebut ikut
+dipublikasikan sebagai release asset. Detail hasil pengukuran ada di
+[`docs/VERIFICATION.md`](docs/VERIFICATION.md).
 
 Reproduksi build secara lokal:
 
 ```bash
 export NDK=$ANDROID_NDK_HOME
 BIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+VERSION=$(sed -n 's/^version=//p' module.prop)
 mkdir -p out/system/bin out/webroot
 
 COMMON=(
   -std=c++17 -Os -DNDEBUG -D_FORTIFY_SOURCE=2
+  -DFLICK_VERSION="\"$VERSION\""
   -ffp-contract=off -fno-exceptions -fno-rtti -fvisibility=hidden
   -fstack-protector-strong -fno-unwind-tables -fno-asynchronous-unwind-tables
   -ffunction-sections -fdata-sections -ffile-prefix-map="$PWD"=.
@@ -101,6 +153,11 @@ g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Werror \
   -DFLICK_PROC_TEST -DFLICK_PROC_ROOT='"/tmp/flick-proc-test"' \
   proc_test.cpp -o proc-test
 ./proc-test
+
+VERSION=$(sed -n 's/^version=//p' module.prop)
+g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Werror \
+  -DFLICK_VERSION="\"$VERSION\"" ctrl_test.cpp -o ctrl-test -lm
+./ctrl-test
 
 python3 tools/check_webui.py index.html
 ```
@@ -134,9 +191,10 @@ plugin dan daemon memuat ulang saat file berubah.
 
 | File | Fungsi |
 |---|---|
-| `flick.cpp` | Daemon, grab/uinput, kalkulasi sensitivitas, dan filter |
+| `flick.cpp` | Daemon, grab/uinput, kalkulasi sensitivitas, filter, dan control server opsional |
 | `selftest.cpp` | Selftest kalkulasi yang bisa dijalankan di host |
 | `proc_test.cpp` | Unit test deteksi foreground dan pemindaian `/proc` |
+| `ctrl_test.cpp` | Test host autentikasi, perintah, persistence, dan koneksi control server |
 | `index.html` | WebUI plugin |
 | `ctl.sh` | Entry point WebUI: `status`, `save`, `start`, `stop` |
 | `customize.sh` | Menyalin binary sesuai ABI saat instalasi |
@@ -145,6 +203,8 @@ plugin dan daemon memuat ulang saat file berubah.
 | `notify.sh` | Notifikasi status aktif/idle |
 | `module.prop` | Metadata plugin AxManager |
 | `tools/` | Packager deterministik, pemeriksa WebUI, dan microbenchmark |
+| `docs/CONTROL_PROTOCOL.md` | Spesifikasi protokol kontrol v1 dan rencana test |
+| `docs/DECISIONS.md` | Asumsi dan keputusan desain yang tidak sepenuhnya ditentukan |
 | `docs/` | Rencana optimasi dan hasil verifikasi |
 
 ## Kredit
