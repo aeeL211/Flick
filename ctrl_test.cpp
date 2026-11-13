@@ -13,6 +13,7 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -40,6 +41,15 @@ static size_t countOf(const std::string &hay, const std::string &needle) {
   size_t n = 0;
   for (size_t p = hay.find(needle); p != std::string::npos; p = hay.find(needle, p + needle.size())) n++;
   return n;
+}
+
+// runs the real entry point with mutable argument strings, like the shell would
+static int runMain(const std::vector<std::string> &args) {
+  std::vector<char *> argv;
+  argv.reserve(args.size() + 1);
+  for (const std::string &s : args) argv.push_back(const_cast<char *>(s.c_str()));
+  argv.push_back(nullptr);
+  return flickMain((int)args.size(), argv.data());
 }
 
 static bool sendAll(int fd, const std::string &s) {
@@ -174,6 +184,38 @@ int main() {
   check(getenv("FLICK_TOKEN") == nullptr, "valid token is removed from the environment");
   check(tokenEqual(token.c_str(), token.size()), "stored token compares equal");
   check(!tokenEqual("x", 1), "wrong token compares unequal");
+
+  std::string cliPid =
+      (fs::temp_directory_path() / ("flick-cli-" + std::to_string((long)getpid()) + ".pid")).string();
+  unlink(cliPid.c_str());
+  check(runMain({"flick", "--listen", "8765", "--pidfile", cliPid, "--config", "/nonexistent"}) == 2,
+        "--listen without FLICK_TOKEN exits 2");
+  check(runMain({"flick", "--listen"}) == 2, "missing port value exits 2");
+  check(runMain({"flick", "--listen", "70000"}) == 2, "out-of-range port exits 2");
+
+  int blocker = socket(AF_INET, SOCK_STREAM, 0);
+  sockaddr_in ba;
+  memset(&ba, 0, sizeof ba);
+  ba.sin_family = AF_INET;
+  ba.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+  bool blocked =
+      blocker >= 0 &&
+      bind(blocker, reinterpret_cast<sockaddr *>(static_cast<void *>(&ba)), sizeof ba) == 0 &&
+      listen(blocker, 1) == 0;
+  socklen_t bl = sizeof ba;
+  if (blocked)
+    blocked = getsockname(blocker, reinterpret_cast<sockaddr *>(static_cast<void *>(&ba)), &bl) == 0;
+  check(blocked, "blocker socket owns a loopback port");
+  if (blocked) {
+    setenv("FLICK_TOKEN", token.c_str(), 1);
+    check(runMain({"flick", "--listen", std::to_string((unsigned)ntohs(ba.sin_port)),
+                   "--pidfile", cliPid, "--config", "/nonexistent"}) == 3,
+          "bind failure exits 3");
+    check(getenv("FLICK_TOKEN") == nullptr, "failed bind start scrubs the token");
+  }
+  if (blocker >= 0) close(blocker);
+  setenv("FLICK_TOKEN", token.c_str(), 1);
+  check(ctlLoadToken(), "token is reloaded for the protocol test");
 
   check(ctlStart(0) == 0, "listener binds an ephemeral loopback port");
   check(gCtlListen >= 0 && gCtlPort != 0, "listener and assigned port are published");
