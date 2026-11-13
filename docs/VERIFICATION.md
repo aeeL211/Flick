@@ -45,8 +45,9 @@ the hash unchanged.
 
 ## 3. Build and package size
 
-All binary numbers are from the downloaded final artifact; `text` is the `llvm-size` value reported
-by the workflow.
+Final sizes are from the downloaded final artifact; baseline file sizes are from the baseline zip.
+`text` is the `llvm-size` value; the baseline values are computed from its ELF with the same
+section classification.
 
 | Metric | Baseline | Final | Delta |
 |---|---:|---:|---:|

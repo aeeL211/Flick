@@ -1,6 +1,7 @@
 # Flick optimization and AxManager/AOSP alignment plan
 
-Status: research complete, implementation not started.
+Status: historical phase-1 document; research complete. Implementation and measured results are in
+[`VERIFICATION.md`](VERIFICATION.md).
 Target: `aeeL211/Flick` at `8d9b390` (branch `perf/axmanager-aosp-optimization`).
 Reference implementation: `fahrez182/AxManager` source and plugin documentation.
 Evidence baseline: GitHub Actions run `41944937637` (successful `main` build).
