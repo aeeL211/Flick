@@ -114,6 +114,10 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The reproducible timestamp needs the real last-change commit for module.prop. A shallow
+          # checkout makes git log treat HEAD as that commit.
+          fetch-depth: 0
 
       - name: Locate Android NDK
         run: |
