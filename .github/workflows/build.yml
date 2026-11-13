@@ -60,6 +60,17 @@ jobs:
           echo "NDK=$NDK" >> "$GITHUB_ENV"
           grep '^Pkg.Revision' "$NDK/source.properties"
 
+      - name: Microbenchmark O2 vs Os
+        run: |
+          set -euo pipefail
+          for mode in 2 s; do
+            g++ -std=c++17 -O$mode -ffp-contract=off -Wall -Wextra -Werror \
+              -DFLICK_BENCH_OPT=$([ "$mode" = 2 ] && echo 2 || echo 0) \
+              -fno-exceptions -fno-rtti tools/bench.cpp -o "bench-$mode" -lm
+          done
+          ./bench-2 | tee bench.txt
+          ./bench-s | tee -a bench.txt
+
       - name: Cross-build selftest (arm64 + arm)
         run: |
           set -euo pipefail
@@ -96,6 +107,7 @@ jobs:
             selftest-host.log
             selftest-san.log
             proc-test.log
+            bench.txt
 
   build:
     runs-on: ubuntu-latest
