@@ -21,9 +21,9 @@ Dirancang untuk **Free Fire** dan **Free Fire Max**, tetapi daftar package bisa 
 ## Keamanan
 
 - Jika proses daemon mati, kernel melepas grab dan sentuhan kembali normal.
-- Flick tidak pernah mengambil alih touchscreen saat jari sedang menempel. Pemeriksaan dilakukan
-  sebelum dan sesudah `EVIOCGRAB`; jika jari mendarat di celah di antara keduanya, grab langsung
-  dilepas dan dicoba lagi.
+- Flick tidak mempertahankan grab saat jari sedang menempel. Pemeriksaan dilakukan sebelum dan
+  sesudah `EVIOCGRAB`; jika jari mendarat di celah di antara keduanya, grab langsung dilepas dan
+  dicoba lagi.
 - Setelah `SYN_DROPPED`, jari virtual diangkat terlebih dahulu.
 - Grab hanya dilepas saat tidak ada jari virtual yang menekan.
 - Tidak ada pemanggilan `dumpsys`, `ps`, atau proses anak lain di jalur polling.
