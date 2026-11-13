@@ -90,6 +90,27 @@ jobs:
             proc_test.cpp -o proc-test
           ./proc-test | tee proc-test.log
 
+      - name: Host control server test
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^version=//p' module.prop)
+          [ -n "$VERSION" ] || { echo "::error::module.prop has no version"; exit 1; }
+          g++ -std=c++17 -O2 -ffp-contract=off -Wall -Wextra -Werror \
+            -DFLICK_VERSION="\"$VERSION\"" ctrl_test.cpp -o ctrl-test -lm
+          ./ctrl-test | tee ctrl-test.log
+
+      - name: Host control server test with sanitizers
+        run: |
+          set -euo pipefail
+          VERSION=$(sed -n 's/^version=//p' module.prop)
+          [ -n "$VERSION" ] || { echo "::error::module.prop has no version"; exit 1; }
+          g++ -std=c++17 -O1 -g -ffp-contract=off -Wall -Wextra -Werror \
+            -fno-omit-frame-pointer -fsanitize=address,undefined \
+            -DFLICK_VERSION="\"$VERSION\"" ctrl_test.cpp -o ctrl-test-san -lm
+          ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
+          UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+            ./ctrl-test-san | tee ctrl-test-san.log
+
       - name: Shell syntax and shellcheck
         run: |
           set -euo pipefail
@@ -107,6 +128,8 @@ jobs:
             selftest-host.log
             selftest-san.log
             proc-test.log
+            ctrl-test.log
+            ctrl-test-san.log
             bench.txt
 
   build:
@@ -138,9 +161,12 @@ jobs:
         run: |
           set -euo pipefail
           BIN=$NDK/toolchains/llvm/prebuilt/linux-x86_64/bin
+          VERSION=$(sed -n 's/^version=//p' module.prop)
+          [ -n "$VERSION" ] || { echo "::error::module.prop has no version"; exit 1; }
           mkdir -p out/system/bin metrics
           COMMON=(
             -std=c++17 -Os -DNDEBUG -D_FORTIFY_SOURCE=2
+            -DFLICK_VERSION="\"$VERSION\""
             -ffp-contract=off -fno-exceptions -fno-rtti -fvisibility=hidden
             -fstack-protector-strong -fno-unwind-tables -fno-asynchronous-unwind-tables
             -ffunction-sections -fdata-sections -ffile-prefix-map="$PWD"=.
@@ -230,6 +256,11 @@ jobs:
           cmp dist/Flick-*.zip dist-repro/Flick-*.zip
           (cd dist && sha256sum -c Flick-*.zip.sha256)
           unzip -l dist/Flick-*.zip
+          cp out/system/bin/flick.arm64 dist/flick-arm64
+          cp out/system/bin/flick.arm dist/flick-arm
+          (cd dist && sha256sum flick-arm64 > flick-arm64.sha256)
+          (cd dist && sha256sum flick-arm > flick-arm.sha256)
+          (cd dist && sha256sum -c flick-arm64.sha256 flick-arm.sha256)
 
       - name: Build info
         run: |
@@ -254,6 +285,10 @@ jobs:
             dist/Flick-*.zip
             dist/Flick-*.zip.sha256
             dist/Flick-*.manifest.txt
+            dist/flick-arm64
+            dist/flick-arm
+            dist/flick-arm64.sha256
+            dist/flick-arm.sha256
             dist/build-info.txt
             dist/*.txt
 
@@ -274,3 +309,7 @@ jobs:
             dist/Flick-*.zip
             dist/Flick-*.zip.sha256
             dist/Flick-*.manifest.txt
+            dist/flick-arm64
+            dist/flick-arm
+            dist/flick-arm64.sha256
+            dist/flick-arm.sha256
