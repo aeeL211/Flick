@@ -113,6 +113,7 @@ struct Config {
 };
 
 static void setPkgs(const char *s);
+static bool pkgChar(char ch);
 
 static float clampf(float v, float lo, float hi) { return v < lo ? lo : (v > hi ? hi : v); }
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : (v > hi ? hi : v); }
@@ -125,6 +126,133 @@ static void deriveFilter(Config &c) {
   c.beta = 0.5f * powf(120.0f, r);
 }
 
+// One config pair can come from the file or from the control protocol. The file keeps its
+// historical lenient behavior: a value that does not start with a digit is ignored and numbers
+// are clamped. The protocol uses the same ranges in strict mode, where the whole value must parse
+// and the result must be inside the range. A strict SET is applied only after every pair passes.
+enum ApplyResult { applyOk, applyBad, applyUnknown };
+
+static bool strictFloat(const char *v, float &out) {
+  if (*v < '0' || *v > '9') return false;
+  char *end = nullptr;
+  errno = 0;
+  double d = strtod(v, &end);
+  if (end == v || *end || errno == ERANGE || !isfinite(d)) return false;
+  out = (float)d;
+  return true;
+}
+
+static bool strictInt(const char *v, int &out) {
+  if (*v < '0' || *v > '9') return false;
+  char *end = nullptr;
+  errno = 0;
+  long x = strtol(v, &end, 10);
+  if (end == v || *end || errno == ERANGE || x < INT32_MIN || x > INT32_MAX) return false;
+  out = (int)x;
+  return true;
+}
+
+static bool applyFloat(const char *v, float &dst, float lo, float hi, bool strict, const char **why) {
+  float x;
+  if (strict) {
+    if (!strictFloat(v, x)) { *why = "invalid"; return false; }
+    if (x < lo || x > hi) { *why = "range"; return false; }
+  } else {
+    if (*v < '0' || *v > '9') return false;
+    x = (float)atof(v);
+  }
+  dst = clampf(x, lo, hi);
+  return true;
+}
+
+static bool applyInt(const char *v, int &dst, int lo, int hi, bool strict, const char **why) {
+  int x;
+  if (strict) {
+    if (!strictInt(v, x)) { *why = "invalid"; return false; }
+    if (x < lo || x > hi) { *why = "range"; return false; }
+  } else {
+    if (*v < '0' || *v > '9') return false;
+    x = atoi(v);
+  }
+  dst = clampi(x, lo, hi);
+  return true;
+}
+
+static bool applyBool(const char *v, int &dst, bool strict, const char **why) {
+  int x;
+  if (strict) {
+    if (!strictInt(v, x)) { *why = "invalid"; return false; }
+    if (x != 0 && x != 1) { *why = "range"; return false; }
+  } else {
+    if (*v < '0' || *v > '9') return false;
+    x = atoi(v) != 0;
+  }
+  dst = x != 0;
+  return true;
+}
+
+static bool applyOrient(const char *v, int &dst, bool strict, const char **why) {
+  int x;
+  if (strict) {
+    if (!strictInt(v, x)) { *why = "invalid"; return false; }
+    if (x != 1 && x != 3) { *why = "range"; return false; }
+  } else {
+    if (*v < '0' || *v > '9') return false;
+    x = atoi(v);
+  }
+  dst = x == 3 ? 3 : 1;
+  return true;
+}
+
+// the package list rules are shared with parsePkgs, but the protocol rejects a malformed list
+// instead of silently dropping tokens or falling back to the defaults.
+static bool validPkgList(const char *v, const char **why) {
+  size_t len = strlen(v);
+  if (!len) { *why = "invalid"; return false; }
+  if (len >= pkgBuf) { *why = "length"; return false; }
+  int n = 0;
+  const char *s = v;
+  for (;;) {
+    const char *t = s;
+    while (*s && *s != ',') s++;
+    size_t l = (size_t)(s - t);
+    if (!l) { *why = "invalid"; return false; }
+    if (l >= pkgLen) { *why = "length"; return false; }
+    for (size_t i = 0; i < l; i++)
+      if (!pkgChar(t[i])) { *why = "invalid"; return false; }
+    if (++n > maxPkgs) { *why = "range"; return false; }
+    if (!*s) break;
+    s++;
+  }
+  return true;
+}
+
+// keys and values are bounded by the caller; unknown keys are ignored by the file parser and
+// reported by the protocol.
+static ApplyResult applySetting(const char *k, const char *v, Config &c, bool strict, const char **why) {
+  if (!strcmp(k, "pkgs")) {
+    if (strict && !validPkgList(v, why)) return applyBad;
+    snprintf(c.pkgs, sizeof c.pkgs, "%s", v);
+    return applyOk;
+  }
+  bool ok;
+  if (!strcmp(k, "sens_h")) ok = applyFloat(v, c.sensH, 1.0f, 5.0f, strict, why);
+  else if (!strcmp(k, "sens_v")) ok = applyFloat(v, c.sensV, 1.0f, 5.0f, strict, why);
+  else if (!strcmp(k, "zone")) ok = applyInt(v, c.zone, 0, 2, strict, why);
+  else if (!strcmp(k, "orient")) ok = applyOrient(v, c.orient, strict, why);
+  else if (!strcmp(k, "smooth")) ok = applyBool(v, c.smooth, strict, why);
+  else if (!strcmp(k, "strength")) ok = applyInt(v, c.strength, 1, 100, strict, why);
+  else if (!strcmp(k, "resp")) ok = applyInt(v, c.resp, 1, 100, strict, why);
+  else if (!strcmp(k, "curve")) ok = applyInt(v, c.curve, 0, 2, strict, why);
+  else if (!strcmp(k, "hw")) ok = applyBool(v, c.hw, strict, why);
+  else if (!strcmp(k, "filter")) ok = applyBool(v, c.filter, strict, why);
+  else {
+    if (strict) *why = "unknown";
+    return applyUnknown;
+  }
+  return ok ? applyOk : applyBad;
+}
+
 // applies one config line, key=value with the value cut at the line end. a value that does not
 // start with a digit is malformed and the previous setting stays, pkgs is the only text value.
 static void parseLine(char *line, Config &c) {
@@ -134,18 +262,7 @@ static void parseLine(char *line, Config &c) {
   const char *k = line;
   char *v = eq + 1;
   v[strcspn(v, "\r\n")] = 0;
-  if (!strcmp(k, "pkgs")) { snprintf(c.pkgs, sizeof c.pkgs, "%s", v); return; }
-  if (*v < '0' || *v > '9') return;
-  if (!strcmp(k, "sens_h")) c.sensH = clampf((float)atof(v), 1.0f, 5.0f);
-  else if (!strcmp(k, "sens_v")) c.sensV = clampf((float)atof(v), 1.0f, 5.0f);
-  else if (!strcmp(k, "zone")) c.zone = clampi(atoi(v), 0, 2);
-  else if (!strcmp(k, "orient")) c.orient = atoi(v) == 3 ? 3 : 1;
-  else if (!strcmp(k, "smooth")) c.smooth = atoi(v) != 0;
-  else if (!strcmp(k, "strength")) c.strength = clampi(atoi(v), 1, 100);
-  else if (!strcmp(k, "resp")) c.resp = clampi(atoi(v), 1, 100);
-  else if (!strcmp(k, "curve")) c.curve = clampi(atoi(v), 0, 2);
-  else if (!strcmp(k, "hw")) c.hw = atoi(v) != 0;
-  else if (!strcmp(k, "filter")) c.filter = atoi(v) != 0;
+  (void)applySetting(k, v, c, false, nullptr);
 }
 
 // reads the config in chunks and cuts it into lines. a line longer than the line buffer is dropped
