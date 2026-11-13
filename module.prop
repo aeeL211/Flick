@@ -1,7 +1,7 @@
 id=flick
 name=Flick
-version=v0.9.10
-versionCode=28
+version=v0.9.11
+versionCode=29
 author=t.me/aeeL2
 description=Lightweight touch sensitivity tuner for games.
 axeronPlugin=19200
