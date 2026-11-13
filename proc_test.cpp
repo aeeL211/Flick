@@ -2,7 +2,7 @@
 // so the incremental scan and the "skip while already foreground" path can be checked on the host
 // without a phone and without touching the real /proc.
 //
-//   g++ -std=c++17 -O2 -ffp-contract=off -DFLICK_PROC_TEST \
+//   g++ -std=c++17 -O2 -ffp-contract=off -DFLICK_PROC_TEST
 //       -DFLICK_PROC_ROOT='"/tmp/flick-proc-test"' proc_test.cpp -o proc-test
 //   ./proc-test
 #define main flickMain
