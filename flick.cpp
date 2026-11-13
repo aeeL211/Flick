@@ -1517,11 +1517,32 @@ static void ctlRead(CtlConn &c, int64_t now) {
 
 static void ctlConnService(CtlConn &c, short ev, int64_t now) {
   if (c.fd < 0) return;
-  if (!ctlFlush(c) || (ev & (POLLERR | POLLNVAL))) { ctlClose(c); return; }
+  bool stop = c.stopWhenDrained;
+  if (!ctlFlush(c) || (ev & (POLLERR | POLLNVAL))) {
+    ctlClose(c);
+    if (stop) gStop = 1;
+    return;
+  }
   if (ev & (POLLIN | POLLHUP)) ctlRead(c, now);
-  if (c.fd < 0) return;
-  if (!ctlFlush(c)) { ctlClose(c); return; }
-  if ((c.peerClosed && c.outLen == 0) || (c.stopWhenDrained && c.outLen == 0)) ctlClose(c);
+  stop = c.stopWhenDrained;
+  if (c.fd < 0) {
+    if (stop) gStop = 1;
+    return;
+  }
+  if (!ctlFlush(c)) {
+    ctlClose(c);
+    if (stop) gStop = 1;
+    return;
+  }
+  if (c.peerClosed && c.outLen == 0) {
+    ctlClose(c);
+    if (stop) gStop = 1;
+    return;
+  }
+  if (stop && c.outLen == 0) {
+    ctlClose(c);
+    gStop = 1;
+  }
 }
 
 // called after poll with the readiness of the three control descriptors
@@ -1539,16 +1560,8 @@ static void ctlService(int64_t now, short listenEv, short pendingEv, short clien
     if (gCtlPending.fd >= 0 && gCtlPending.failed && now >= gCtlPending.closeAtMs)
       ctlClose(gCtlPending);
   }
-  if (gCtlClient.fd >= 0) {
-    bool stopAfter = gCtlClient.stopWhenDrained;
+  if (gCtlClient.fd >= 0)
     ctlConnService(gCtlClient, clientFd == gCtlClient.fd ? clientEv : 0, now);
-    if (gCtlClient.fd < 0) {
-      if (stopAfter) gStop = 1;
-    } else if (gCtlClient.stopWhenDrained && gCtlClient.outLen == 0) {
-      ctlClose(gCtlClient);
-      gStop = 1;
-    }
-  }
 }
 
 // binds only the loopback address. port 0 is accepted for the host test, which learns the real
