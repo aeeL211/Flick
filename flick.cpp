@@ -1087,6 +1087,7 @@ static void wipeMem(void *p, size_t n) {
 // hook can be forked. a malformed token is also scrubbed.
 static bool ctlLoadToken() {
   gCtlTokenLen = 0;
+  wipeMem(gCtlToken, sizeof gCtlToken);
   char *e = getenv("FLICK_TOKEN");
   if (!e) return false;
   size_t n = strlen(e);
